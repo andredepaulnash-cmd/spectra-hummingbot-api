@@ -1935,6 +1935,139 @@ class ExecutorService:
         except Exception as e:
             logger.error(f"Error persisting position hold: {e}", exc_info=True)
 
+    async def get_active_position_holds_accounting(
+        self,
+        account_name: Optional[str] = None,
+        connector_name: Optional[str] = None,
+        trading_pair: Optional[str] = None,
+        controller_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return exact persisted accounting for ACTIVE position holds.
+
+        This is deliberately separate from get_positions_held(), whose public
+        API presentation converts amounts to floats. Capital/risk consumers
+        need the database's exact NUMERIC values instead.
+        """
+        if not self.db_manager:
+            raise RuntimeError(
+                "position-hold accounting unavailable: "
+                "database manager is not configured"
+            )
+
+        async with self.db_manager.get_session_context() as session:
+            repo = ExecutorRepository(session)
+            records = await repo.get_active_position_holds(
+                account_name=account_name,
+                connector_name=connector_name,
+                trading_pair=trading_pair,
+                controller_id=controller_id,
+            )
+
+        def exact_decimal(
+            value: Any,
+            *,
+            field: str,
+            allow_negative: bool = False,
+        ) -> Decimal:
+            try:
+                result = Decimal(str(0 if value is None else value))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"invalid persisted position-hold decimal: {field}"
+                ) from exc
+
+            if not result.is_finite():
+                raise RuntimeError(
+                    f"non-finite persisted position-hold decimal: {field}"
+                )
+
+            if not allow_negative and result < Decimal("0"):
+                raise RuntimeError(
+                    f"negative persisted position-hold decimal: {field}"
+                )
+
+            return result
+
+        rows: List[Dict[str, Any]] = []
+
+        for record in records:
+            if record.status != "ACTIVE":
+                raise RuntimeError(
+                    "non-ACTIVE row returned by active position-hold query"
+                )
+
+            try:
+                executor_ids = (
+                    json.loads(record.executor_ids)
+                    if record.executor_ids
+                    else []
+                )
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise RuntimeError(
+                    f"invalid executor_ids for position hold {record.id}"
+                ) from exc
+
+            if (
+                not isinstance(executor_ids, list)
+                or any(
+                    not isinstance(executor_id, str)
+                    or not executor_id.strip()
+                    for executor_id in executor_ids
+                )
+                or len(set(executor_ids)) != len(executor_ids)
+            ):
+                raise RuntimeError(
+                    f"invalid executor ownership for position hold {record.id}"
+                )
+
+            buy_amount_base = exact_decimal(
+                record.buy_amount_base,
+                field="buy_amount_base",
+            )
+            buy_amount_quote = exact_decimal(
+                record.buy_amount_quote,
+                field="buy_amount_quote",
+            )
+            sell_amount_base = exact_decimal(
+                record.sell_amount_base,
+                field="sell_amount_base",
+            )
+            sell_amount_quote = exact_decimal(
+                record.sell_amount_quote,
+                field="sell_amount_quote",
+            )
+            realized_pnl_quote = exact_decimal(
+                record.realized_pnl_quote,
+                field="realized_pnl_quote",
+                allow_negative=True,
+            )
+            cum_fees_quote = exact_decimal(
+                record.cum_fees_quote,
+                field="cum_fees_quote",
+            )
+
+            rows.append({
+                "account_name": str(record.account_name),
+                "connector_name": str(record.connector_name),
+                "trading_pair": str(record.trading_pair),
+                "controller_id": str(record.controller_id or "main"),
+                "status": "ACTIVE",
+                "buy_amount_base": format(buy_amount_base, "f"),
+                "buy_amount_quote": format(buy_amount_quote, "f"),
+                "sell_amount_base": format(sell_amount_base, "f"),
+                "sell_amount_quote": format(sell_amount_quote, "f"),
+                "realized_pnl_quote": format(realized_pnl_quote, "f"),
+                "cum_fees_quote": format(cum_fees_quote, "f"),
+                "executor_ids": executor_ids,
+                "last_updated": (
+                    record.last_updated.isoformat()
+                    if record.last_updated
+                    else None
+                ),
+            })
+
+        return rows
+
     def get_positions_held(
         self,
         account_name: Optional[str] = None,

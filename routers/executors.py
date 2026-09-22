@@ -5,7 +5,7 @@ This router enables running Hummingbot executors directly via API
 without Docker containers or full strategy setup.
 """
 import logging
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from starlette import status
@@ -15,6 +15,7 @@ from models.executors import (
     CreateExecutorRequest,
     CreateExecutorResponse,
     ExecutorDetailResponse,
+    ExactPositionHoldAccountingResponse,
     ExecutorFilterRequest,
     ExecutorLogsResponse,
     ExecutorsSummaryResponse,
@@ -408,6 +409,32 @@ async def resolve_orphaned_position(
     except Exception as e:
         logger.error(f"Error resolving orphaned position for {executor_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error resolving orphaned position: {str(e)}")
+
+
+@router.get(
+    "/positions/accounting",
+    response_model=List[ExactPositionHoldAccountingResponse],
+)
+async def get_positions_accounting(
+    account_name: Optional[str] = None,
+    connector_name: Optional[str] = None,
+    trading_pair: Optional[str] = None,
+    controller_id: Optional[str] = None,
+    executor_service: ExecutorService = Depends(get_executor_service),
+):
+    """Return exact persisted accounting for ACTIVE position holds."""
+    try:
+        return await executor_service.get_active_position_holds_accounting(
+            account_name=account_name,
+            connector_name=connector_name,
+            trading_pair=trading_pair,
+            controller_id=controller_id,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
 
 
 @router.get("/positions/summary", response_model=PositionsSummaryResponse)

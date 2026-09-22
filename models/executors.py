@@ -212,6 +212,29 @@ class PositionHoldResponse(BaseModel):
     last_updated: Optional[str]
 
 
+class ExactPositionHoldAccountingResponse(BaseModel):
+    """Exact persisted accounting for one ACTIVE position hold.
+
+    Decimal accounting values are serialized as strings so this endpoint can
+    be consumed by capital/risk systems without an intermediate float.
+    """
+    account_name: str
+    connector_name: str
+    trading_pair: str
+    controller_id: str
+    status: Literal["ACTIVE"]
+
+    buy_amount_base: str
+    buy_amount_quote: str
+    sell_amount_base: str
+    sell_amount_quote: str
+    realized_pnl_quote: str
+    cum_fees_quote: str
+
+    executor_ids: List[str]
+    last_updated: Optional[str]
+
+
 class PositionsSummaryResponse(BaseModel):
     """Summary of all held positions."""
     total_positions: int = Field(description="Number of active position holds")
