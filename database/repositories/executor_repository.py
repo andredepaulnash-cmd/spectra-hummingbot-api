@@ -308,12 +308,15 @@ class ExecutorRepository:
         if executor_ids is None:
             executor_ids = []
 
+        # The table has one durable row per
+        # (account, connector, pair, controller). A CLEARED row must therefore
+        # be reactivated rather than followed by an INSERT with the same
+        # unique key.
         stmt = select(PositionHoldRecord).where(and_(
             PositionHoldRecord.account_name == account_name,
             PositionHoldRecord.connector_name == connector_name,
             PositionHoldRecord.trading_pair == trading_pair,
             PositionHoldRecord.controller_id == controller_id,
-            PositionHoldRecord.status == "ACTIVE",
         ))
         result = await self.session.execute(stmt)
         record = result.scalar_one_or_none()
@@ -326,6 +329,8 @@ class ExecutorRepository:
             record.realized_pnl_quote = realized_pnl_quote
             record.cum_fees_quote = cum_fees_quote
             record.executor_ids = _json.dumps(executor_ids)
+            record.status = "ACTIVE"
+            record.cleared_at = None
         else:
             record = PositionHoldRecord(
                 account_name=account_name,
