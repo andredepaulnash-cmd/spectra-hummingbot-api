@@ -45,6 +45,7 @@ from models.executors import PositionHold
 from services.gateway_client import get_native_gas_token
 from services.trading_service import AccountTradingInterface, TradingService
 from utils.executor_log_capture import ExecutorLogCapture, current_executor_id
+from utils.executor_order_provenance import format_executor_order_provenance_record
 from utils.position_hold_accounting import format_active_position_hold_accounting_record
 from utils.trading_pair import InvalidTradingPair, split_trading_pair
 
@@ -1034,6 +1035,44 @@ class ExecutorService:
                 logger.error(f"Error fetching executor from database: {e}")
 
         return None
+
+    async def get_executor_orders_exact(
+        self,
+        executor_id: str,
+    ) -> List[Dict[str, Any]]:
+        """Return exact persisted order ownership for one executor.
+
+        This endpoint is deliberately database-backed. Executor-order ownership
+        survives process restarts in executor_orders; in-memory TrackedOrder
+        objects are not authoritative enough for accounting reconciliation.
+        Decimal values are serialized as strings so downstream capital/accounting
+        systems never pass them through binary floats.
+        """
+        executor_id = executor_id.strip()
+        if not executor_id:
+            raise ValueError("executor_id cannot be empty")
+        if not self.db_manager:
+            raise RuntimeError(
+                "executor order provenance unavailable: database manager is not configured"
+            )
+
+        async with self.db_manager.get_session_context() as session:
+            repo = ExecutorRepository(session)
+            record = await repo.get_executor_by_id(executor_id)
+            if record is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Executor {executor_id} not found",
+                )
+            orders = await repo.get_executor_orders(executor_id)
+
+        return [
+            format_executor_order_provenance_record(
+                order,
+                expected_executor_id=executor_id,
+            )
+            for order in orders
+        ]
 
     def get_executor_logs(
         self,

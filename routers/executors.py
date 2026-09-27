@@ -18,6 +18,7 @@ from models.executors import (
     ExactPositionHoldAccountingResponse,
     ExecutorFilterRequest,
     ExecutorLogsResponse,
+    ExecutorOrdersResponse,
     ExecutorsSummaryResponse,
     OrphanedPositionsResponse,
     PerformanceReportResponse,
@@ -297,6 +298,32 @@ async def get_available_executor_types():
             }
         ]
     }
+
+
+@router.get("/{executor_id}/orders", response_model=ExecutorOrdersResponse)
+async def get_executor_orders(
+    executor_id: str,
+    executor_service: ExecutorService = Depends(get_executor_service),
+):
+    """Return exact persisted client-order ownership for one executor."""
+    try:
+        orders = await executor_service.get_executor_orders_exact(executor_id)
+        return ExecutorOrdersResponse(
+            executor_id=executor_id,
+            count=len(orders),
+            orders=orders,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Error getting order provenance for executor {executor_id}: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error getting executor order provenance: {str(e)}",
+        )
 
 
 @router.get("/{executor_id}", response_model=ExecutorDetailResponse)

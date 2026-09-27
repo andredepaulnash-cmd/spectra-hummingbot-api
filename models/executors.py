@@ -436,6 +436,29 @@ class ExecutorDetailResponse(ExecutorResponse):
     )
 
 
+class ExecutorOrderProvenanceRecord(BaseModel):
+    """Exact persisted ownership record for one order created by an executor."""
+    executor_id: str
+    client_order_id: str
+    exchange_order_id: Optional[str] = None
+    order_type: str
+    trade_type: str
+    amount: str
+    price: Optional[str] = None
+    status: str
+    filled_amount: str
+    average_fill_price: Optional[str] = None
+    created_at: str
+    updated_at: Optional[str] = None
+
+
+class ExecutorOrdersResponse(BaseModel):
+    """All persisted order identities owned by one executor."""
+    executor_id: str
+    count: int
+    orders: List[ExecutorOrderProvenanceRecord]
+
+
 class CreateExecutorResponse(BaseModel):
     """Response after creating an executor."""
     executor_id: str = Field(description="Unique executor identifier")

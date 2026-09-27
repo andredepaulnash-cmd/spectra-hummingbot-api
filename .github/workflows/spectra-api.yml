@@ -40,10 +40,14 @@ jobs:
         run: |
           python -m py_compile \
             utils/position_hold_accounting.py \
+            utils/executor_order_provenance.py \
+            models/executors.py \
+            routers/executors.py \
             services/executor_service.py
 
       - name: Run dependency-light Spectra accounting contract
         run: |
           pytest -q -c /dev/null \
             test/test_exact_position_hold_accounting_contract.py \
-            test/test_exact_position_hold_accounting_wiring.py
+            test/test_exact_position_hold_accounting_wiring.py \
+            test/test_executor_order_provenance_contract.py
