@@ -44,6 +44,6 @@ jobs:
 
       - name: Run dependency-light Spectra accounting contract
         run: |
-          pytest -q \
+          pytest -q -c /dev/null \
             test/test_exact_position_hold_accounting_contract.py \
             test/test_exact_position_hold_accounting_wiring.py
