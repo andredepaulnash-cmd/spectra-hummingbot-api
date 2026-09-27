@@ -55,6 +55,9 @@ def test_exact_executor_trade_provenance_preserves_decimal_strings():
         order,
         trade,
         expected_executor_id="exec-1",
+        expected_account_name="master_account",
+        expected_connector_name="kraken",
+        expected_trading_pair="XRP-USD",
     )
 
     assert result["executor_id"] == "exec-1"
@@ -97,8 +100,10 @@ def test_executor_trade_provenance_rejects_client_order_disagreement():
     "field,value",
     [
         ("trade__amount", Decimal("-1")),
+        ("trade__amount", Decimal("0")),
         ("trade__amount", Decimal("NaN")),
         ("trade__price", Decimal("-1")),
+        ("trade__price", Decimal("0")),
         ("trade__fee_paid", Decimal("-0.01")),
         ("trade__fee_paid", Decimal("Infinity")),
     ],
@@ -191,3 +196,17 @@ def test_service_and_router_wire_exact_executor_trade_endpoint():
             paths.append(first.value)
 
     assert "/{executor_id}/trades" in paths
+
+
+def test_executor_trade_provenance_rejects_scope_mismatch():
+    executor_order, order, trade = rows(order__account_name="other")
+    with pytest.raises(RuntimeError, match="account scope"):
+        format_executor_trade_provenance_record(
+            executor_order,
+            order,
+            trade,
+            expected_executor_id="exec-1",
+            expected_account_name="master_account",
+            expected_connector_name="kraken",
+            expected_trading_pair="XRP-USD",
+        )
