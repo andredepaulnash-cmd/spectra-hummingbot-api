@@ -82,6 +82,9 @@ def test_executor_trade_provenance_rejects_cross_executor_ownership():
             order,
             trade,
             expected_executor_id="exec-1",
+            expected_account_name="master_account",
+            expected_connector_name="kraken",
+            expected_trading_pair="XRP-USD",
         )
 
 
@@ -93,6 +96,9 @@ def test_executor_trade_provenance_rejects_client_order_disagreement():
             order,
             trade,
             expected_executor_id="exec-1",
+            expected_account_name="master_account",
+            expected_connector_name="kraken",
+            expected_trading_pair="XRP-USD",
         )
 
 
@@ -119,6 +125,9 @@ def test_executor_trade_provenance_rejects_invalid_accounting_values(
             order,
             trade,
             expected_executor_id="exec-1",
+            expected_account_name="master_account",
+            expected_connector_name="kraken",
+            expected_trading_pair="XRP-USD",
         )
 
 
