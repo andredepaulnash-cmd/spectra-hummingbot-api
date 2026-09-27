@@ -45,6 +45,7 @@ from models.executors import PositionHold
 from services.gateway_client import get_native_gas_token
 from services.trading_service import AccountTradingInterface, TradingService
 from utils.executor_log_capture import ExecutorLogCapture, current_executor_id
+from utils.position_hold_accounting import format_active_position_hold_accounting_record
 from utils.trading_pair import InvalidTradingPair, split_trading_pair
 
 logger = logging.getLogger(__name__)
@@ -1963,110 +1964,10 @@ class ExecutorService:
                 controller_id=controller_id,
             )
 
-        def exact_decimal(
-            value: Any,
-            *,
-            field: str,
-            allow_negative: bool = False,
-        ) -> Decimal:
-            try:
-                result = Decimal(str(0 if value is None else value))
-            except Exception as exc:
-                raise RuntimeError(
-                    f"invalid persisted position-hold decimal: {field}"
-                ) from exc
-
-            if not result.is_finite():
-                raise RuntimeError(
-                    f"non-finite persisted position-hold decimal: {field}"
-                )
-
-            if not allow_negative and result < Decimal("0"):
-                raise RuntimeError(
-                    f"negative persisted position-hold decimal: {field}"
-                )
-
-            return result
-
-        rows: List[Dict[str, Any]] = []
-
-        for record in records:
-            if record.status != "ACTIVE":
-                raise RuntimeError(
-                    "non-ACTIVE row returned by active position-hold query"
-                )
-
-            try:
-                executor_ids = (
-                    json.loads(record.executor_ids)
-                    if record.executor_ids
-                    else []
-                )
-            except (json.JSONDecodeError, TypeError) as exc:
-                raise RuntimeError(
-                    f"invalid executor_ids for position hold {record.id}"
-                ) from exc
-
-            if (
-                not isinstance(executor_ids, list)
-                or any(
-                    not isinstance(executor_id, str)
-                    or not executor_id.strip()
-                    for executor_id in executor_ids
-                )
-                or len(set(executor_ids)) != len(executor_ids)
-            ):
-                raise RuntimeError(
-                    f"invalid executor ownership for position hold {record.id}"
-                )
-
-            buy_amount_base = exact_decimal(
-                record.buy_amount_base,
-                field="buy_amount_base",
-            )
-            buy_amount_quote = exact_decimal(
-                record.buy_amount_quote,
-                field="buy_amount_quote",
-            )
-            sell_amount_base = exact_decimal(
-                record.sell_amount_base,
-                field="sell_amount_base",
-            )
-            sell_amount_quote = exact_decimal(
-                record.sell_amount_quote,
-                field="sell_amount_quote",
-            )
-            realized_pnl_quote = exact_decimal(
-                record.realized_pnl_quote,
-                field="realized_pnl_quote",
-                allow_negative=True,
-            )
-            cum_fees_quote = exact_decimal(
-                record.cum_fees_quote,
-                field="cum_fees_quote",
-            )
-
-            rows.append({
-                "account_name": str(record.account_name),
-                "connector_name": str(record.connector_name),
-                "trading_pair": str(record.trading_pair),
-                "controller_id": str(record.controller_id or "main"),
-                "status": "ACTIVE",
-                "buy_amount_base": format(buy_amount_base, "f"),
-                "buy_amount_quote": format(buy_amount_quote, "f"),
-                "sell_amount_base": format(sell_amount_base, "f"),
-                "sell_amount_quote": format(sell_amount_quote, "f"),
-                "realized_pnl_quote": format(realized_pnl_quote, "f"),
-                "cum_fees_quote": format(cum_fees_quote, "f"),
-                "executor_ids": executor_ids,
-                "last_updated": (
-                    record.last_updated.isoformat()
-                    if record.last_updated
-                    else None
-                ),
-            })
-
-        return rows
+        return [
+            format_active_position_hold_accounting_record(record)
+            for record in records
+        ]
 
     def get_positions_held(
         self,
