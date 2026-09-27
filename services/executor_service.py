@@ -1104,6 +1104,9 @@ class ExecutorService:
                 order,
                 trade,
                 expected_executor_id=executor_id,
+                expected_account_name=record.account_name,
+                expected_connector_name=record.connector_name,
+                expected_trading_pair=record.trading_pair,
             )
             for executor_order, order, trade in rows
         ]
