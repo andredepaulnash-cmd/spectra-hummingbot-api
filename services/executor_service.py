@@ -45,6 +45,7 @@ from models.executors import PositionHold
 from services.gateway_client import get_native_gas_token
 from services.trading_service import AccountTradingInterface, TradingService
 from utils.executor_log_capture import ExecutorLogCapture, current_executor_id
+from utils.executor_order_provenance import format_executor_order_provenance_record
 from utils.position_hold_accounting import format_active_position_hold_accounting_record
 from utils.trading_pair import InvalidTradingPair, split_trading_pair
 
@@ -1066,28 +1067,10 @@ class ExecutorService:
             orders = await repo.get_executor_orders(executor_id)
 
         return [
-            {
-                "executor_id": order.executor_id,
-                "client_order_id": order.client_order_id,
-                "exchange_order_id": order.exchange_order_id,
-                "order_type": order.order_type,
-                "trade_type": order.trade_type,
-                "amount": str(order.amount),
-                "price": None if order.price is None else str(order.price),
-                "status": order.status,
-                "filled_amount": str(order.filled_amount),
-                "average_fill_price": (
-                    None
-                    if order.average_fill_price is None
-                    else str(order.average_fill_price)
-                ),
-                "created_at": order.created_at.isoformat(),
-                "updated_at": (
-                    None
-                    if order.updated_at is None
-                    else order.updated_at.isoformat()
-                ),
-            }
+            format_executor_order_provenance_record(
+                order,
+                expected_executor_id=executor_id,
+            )
             for order in orders
         ]
 
