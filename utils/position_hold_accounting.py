@@ -55,6 +55,7 @@ def format_active_position_hold_accounting_record(record: Any) -> dict[str, Any]
 
     if (
         not isinstance(executor_ids, list)
+        or not executor_ids
         or any(
             not isinstance(executor_id, str)
             or not executor_id.strip()
