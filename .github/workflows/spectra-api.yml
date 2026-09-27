@@ -40,6 +40,7 @@ jobs:
         run: |
           python -m py_compile \
             utils/position_hold_accounting.py \
+            utils/executor_order_provenance.py \
             models/executors.py \
             routers/executors.py \
             services/executor_service.py
