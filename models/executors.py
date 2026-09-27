@@ -459,6 +459,29 @@ class ExecutorOrdersResponse(BaseModel):
     orders: List[ExecutorOrderProvenanceRecord]
 
 
+class ExecutorTradeProvenanceRecord(BaseModel):
+    """Exact confirmed fill owned by one persisted executor order."""
+    executor_id: str
+    order_id: str
+    trade_id: str
+    account_name: str
+    connector_name: str
+    trading_pair: str
+    trade_type: Literal["BUY", "SELL"]
+    amount: str
+    price: str
+    fee_paid: str
+    fee_currency: Optional[str] = None
+    timestamp: str
+
+
+class ExecutorTradesResponse(BaseModel):
+    """All exact persisted trade fills owned by one executor."""
+    executor_id: str
+    count: int
+    trades: List[ExecutorTradeProvenanceRecord]
+
+
 class CreateExecutorResponse(BaseModel):
     """Response after creating an executor."""
     executor_id: str = Field(description="Unique executor identifier")

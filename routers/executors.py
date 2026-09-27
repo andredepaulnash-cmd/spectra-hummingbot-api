@@ -19,6 +19,7 @@ from models.executors import (
     ExecutorFilterRequest,
     ExecutorLogsResponse,
     ExecutorOrdersResponse,
+    ExecutorTradesResponse,
     ExecutorsSummaryResponse,
     OrphanedPositionsResponse,
     PerformanceReportResponse,
@@ -323,6 +324,32 @@ async def get_executor_orders(
         raise HTTPException(
             status_code=500,
             detail=f"Error getting executor order provenance: {str(e)}",
+        )
+
+
+@router.get("/{executor_id}/trades", response_model=ExecutorTradesResponse)
+async def get_executor_trades(
+    executor_id: str,
+    executor_service: ExecutorService = Depends(get_executor_service),
+):
+    """Return exact confirmed fills owned by one executor."""
+    try:
+        trades = await executor_service.get_executor_trades_exact(executor_id)
+        return ExecutorTradesResponse(
+            executor_id=executor_id,
+            count=len(trades),
+            trades=trades,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Error getting trade provenance for executor {executor_id}: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error getting executor trade provenance: {str(e)}",
         )
 
 

@@ -46,6 +46,7 @@ from services.gateway_client import get_native_gas_token
 from services.trading_service import AccountTradingInterface, TradingService
 from utils.executor_log_capture import ExecutorLogCapture, current_executor_id
 from utils.executor_order_provenance import format_executor_order_provenance_record
+from utils.executor_trade_provenance import format_executor_trade_provenance_record
 from utils.position_hold_accounting import format_active_position_hold_accounting_record
 from utils.trading_pair import InvalidTradingPair, split_trading_pair
 
@@ -1072,6 +1073,42 @@ class ExecutorService:
                 expected_executor_id=executor_id,
             )
             for order in orders
+        ]
+
+    async def get_executor_trades_exact(
+        self,
+        executor_id: str,
+    ) -> List[Dict[str, Any]]:
+        """Return confirmed trade fills owned by persisted executor orders."""
+        executor_id = executor_id.strip()
+        if not executor_id:
+            raise ValueError("executor_id cannot be empty")
+        if not self.db_manager:
+            raise RuntimeError(
+                "executor trade provenance unavailable: database manager is not configured"
+            )
+
+        async with self.db_manager.get_session_context() as session:
+            repo = ExecutorRepository(session)
+            record = await repo.get_executor_by_id(executor_id)
+            if record is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Executor {executor_id} not found",
+                )
+            rows = await repo.get_executor_trades(executor_id)
+
+        return [
+            format_executor_trade_provenance_record(
+                executor_order,
+                order,
+                trade,
+                expected_executor_id=executor_id,
+                expected_account_name=record.account_name,
+                expected_connector_name=record.connector_name,
+                expected_trading_pair=record.trading_pair,
+            )
+            for executor_order, order, trade in rows
         ]
 
     def get_executor_logs(
