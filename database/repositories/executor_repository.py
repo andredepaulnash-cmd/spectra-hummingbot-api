@@ -11,7 +11,7 @@ from sqlalchemy import and_, case, desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import ExecutorOrder, ExecutorRecord, PositionHoldRecord
+from database.models import ExecutorOrder, ExecutorRecord, Order, PositionHoldRecord, Trade
 from database.repositories.executor_performance_repository import ExecutorPerformanceRepository
 
 logger = logging.getLogger(__name__)
@@ -648,6 +648,28 @@ class ExecutorRepository:
         stmt = select(ExecutorOrder).where(ExecutorOrder.client_order_id == client_order_id)
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_executor_trades(
+        self,
+        executor_id: str,
+    ) -> List[Tuple[ExecutorOrder, Order, Trade]]:
+        """Return exact persisted fills owned by one executor.
+
+        Ownership is joined by the persisted client order id. No pair/time/size
+        inference participates in this query.
+        """
+        stmt = (
+            select(ExecutorOrder, Order, Trade)
+            .join(
+                Order,
+                ExecutorOrder.client_order_id == Order.client_order_id,
+            )
+            .join(Trade, Trade.order_id == Order.id)
+            .where(ExecutorOrder.executor_id == executor_id)
+            .order_by(Trade.timestamp.asc(), Trade.trade_id.asc())
+        )
+        result = await self.session.execute(stmt)
+        return list(result.all())
 
     async def cleanup_orphaned_executors(
             self,
