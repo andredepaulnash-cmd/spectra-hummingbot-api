@@ -41,6 +41,7 @@ jobs:
           python -m py_compile \
             utils/position_hold_accounting.py \
             utils/executor_order_provenance.py \
+            utils/executor_trade_provenance.py \
             models/executors.py \
             routers/executors.py \
             services/executor_service.py
@@ -50,4 +51,5 @@ jobs:
           pytest -q -c /dev/null \
             test/test_exact_position_hold_accounting_contract.py \
             test/test_exact_position_hold_accounting_wiring.py \
-            test/test_executor_order_provenance_contract.py
+            test/test_executor_order_provenance_contract.py \
+            test/test_executor_trade_provenance_contract.py
