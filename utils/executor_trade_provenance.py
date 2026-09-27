@@ -4,7 +4,13 @@ from decimal import Decimal
 from typing import Any
 
 
-def _decimal_string(value: Any, field: str, *, non_negative: bool = True) -> str:
+def _decimal_string(
+    value: Any,
+    field: str,
+    *,
+    non_negative: bool = True,
+    positive: bool = False,
+) -> str:
     try:
         amount = Decimal(str(value))
     except Exception as exc:
@@ -13,6 +19,8 @@ def _decimal_string(value: Any, field: str, *, non_negative: bool = True) -> str
         raise RuntimeError(f"{field} must be finite")
     if non_negative and amount < 0:
         raise RuntimeError(f"{field} must be non-negative")
+    if positive and amount <= 0:
+        raise RuntimeError(f"{field} must be positive")
     return str(amount)
 
 
@@ -22,6 +30,9 @@ def format_executor_trade_provenance_record(
     trade: Any,
     *,
     expected_executor_id: str,
+    expected_account_name: str,
+    expected_connector_name: str,
+    expected_trading_pair: str,
 ) -> dict[str, Any]:
     """Serialize one executor-owned fill without binary-float conversion."""
 
@@ -59,8 +70,14 @@ def format_executor_trade_provenance_record(
         raise RuntimeError("executor trade is missing trade_id")
     if not account_name or not connector_name:
         raise RuntimeError("executor trade is missing account scope")
+    if account_name != expected_account_name:
+        raise RuntimeError("executor trade account scope does not match executor")
+    if connector_name.lower() != expected_connector_name.lower():
+        raise RuntimeError("executor trade connector scope does not match executor")
     if not trading_pair or "-" not in trading_pair:
         raise RuntimeError("executor trade is missing trading_pair")
+    if trading_pair != expected_trading_pair.upper():
+        raise RuntimeError("executor trade pair does not match executor")
     if trade_type not in {"BUY", "SELL"}:
         raise RuntimeError("executor trade has invalid trade_type")
     if timestamp is None:
@@ -78,8 +95,16 @@ def format_executor_trade_provenance_record(
         "connector_name": connector_name,
         "trading_pair": trading_pair,
         "trade_type": trade_type,
-        "amount": _decimal_string(getattr(trade, "amount", None), "amount"),
-        "price": _decimal_string(getattr(trade, "price", None), "price"),
+        "amount": _decimal_string(
+            getattr(trade, "amount", None),
+            "amount",
+            positive=True,
+        ),
+        "price": _decimal_string(
+            getattr(trade, "price", None),
+            "price",
+            positive=True,
+        ),
         "fee_paid": _decimal_string(
             getattr(trade, "fee_paid", None),
             "fee_paid",
