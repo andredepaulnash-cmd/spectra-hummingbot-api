@@ -131,5 +131,12 @@ def test_service_and_router_wire_exact_executor_order_endpoint():
     route_text = ast.unparse(route_method)
     assert "get_executor_orders_exact" in route_text
 
-    decorators = [ast.unparse(d) for d in route_method.decorator_list]
-    assert any('"/{executor_id}/orders"' in item for item in decorators)
+    route_paths = []
+    for decorator in route_method.decorator_list:
+        if not isinstance(decorator, ast.Call) or not decorator.args:
+            continue
+        first = decorator.args[0]
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            route_paths.append(first.value)
+
+    assert "/{executor_id}/orders" in route_paths
