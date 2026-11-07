@@ -73,6 +73,17 @@ These are **confirmed execution-capable API surfaces**, not a claim that every u
 
 This is a source-level finding. No requests were sent to the running API, no wallets or exchange accounts were accessed, and no code path was activated.
 
+### Additional bot deployment paths — confirmed container-start dispatch
+
+A further trace of the bot orchestration path found two additional authenticated write routes:
+
+- **`POST /bot-orchestration/deploy-v2-controllers`** generates a `v2_with_controllers.py` script configuration and calls `DockerService.create_hummingbot_instance`.
+- **`POST /bot-orchestration/deploy-v2-script`** calls the same Docker service with the requested script deployment.
+
+The Docker service's `create_hummingbot_instance` ends in Docker SDK `containers.run(..., detach=True, ...)`. Docker's `run` operation creates and starts the container; these are not merely configuration-registration routes. The controller deployment can therefore start a Hummingbot container configured with the supplied controller list, and the script deployment can start a container with the supplied script. Both routes are included under the API's HTTP Basic `auth_user` dependency in `main.py`; the inspected route handlers do not require a Spectra proposal, governor receipt, breaker check, or Spectra-specific controller/script allowlist before the Docker dispatch.
+
+Treat these as execution-capable deployment surfaces in a Spectra runtime. The controller and script payloads must be recursively reviewed and restricted to the approved Spectra execution boundary, or these routes must be disabled for the Spectra deployment. A controller/script allowlist applied only to the MCP tools does not govern direct API deployment.
+
 ## 4. Integration and test plan
 
 1. **Local sync:** fetch API `origin/main`; verify the current local branch is still the reported ancestor; fast-forward only. Preserve the modified compose file and both untracked backups. No reset/clean.
