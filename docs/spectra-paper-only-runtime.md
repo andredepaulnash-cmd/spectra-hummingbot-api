@@ -28,6 +28,14 @@ Accepted boolean spellings are `true/false`, `1/0`, and `yes/no` (case-insensiti
 
 With the flag absent or false, the existing non-Spectra API behavior is unchanged. Do not use that legacy mode as a Spectra deployment authorization boundary.
 
+## Hummingbot paper connector configuration
+
+Hummingbot's current paper-trading documentation describes exchange connector names with the `_paper_trade` suffix (for example, `kraken_paper_trade`), configured through `paper_trade.paper_trade_exchanges` in `conf_client.yml`. The documentation lists Binance, KuCoin, Kraken, and Gate.io as enabled by default and describes a separate simulated balance configuration under `paper_trade.paper_trade_account_balance`.
+
+Reference: https://hummingbot.org/client/global-configs/paper-trade/
+
+The API container's exact `conf_client.yml` path and installed Hummingbot core revision still need to be verified. This repository currently installs the Hummingbot package without a pinned version because its API depends on unreleased core fields. Do not assume the latest public paper connector and the API's installed core are compatible until that dependency is pinned and the paper executor flow is tested.
+
 ## Deliberate limitations
 
 - This mode intentionally disables live Hummingbot runtime startup. It therefore cannot be used to claim Hummingbot is already simulating paper orders.
