@@ -105,6 +105,17 @@ The same receipt explicitly records that the complete inherited environment is *
 
 The authenticated Docker router also exposes `POST /docker/start-container/{container_name}`, which calls `DockerService.start_container` and invokes Docker `container.start()` for an existing stopped container. The service performs a name lookup and start; the inspected path does not restrict the target to API-managed Hummingbot instances. It can therefore reactivate any stopped container the API's Docker daemon credentials can access, including a previously configured Hummingbot instance, without going through the MCP governor. Treat container start/restart as a privileged execution dispatch and require a managed-container allowlist, Spectra identity, controller allowlist, and governor boundary before enabling it in the Spectra runtime. The route is not an authorization-safe substitute for the dedicated start-bot path.
 
+### Deeper service trace — direct dispatch confirmed in the inspected API path
+
+The route-to-service trace confirms that several findings are not limited to missing checks in the HTTP handlers:
+
+- **Direct executor API:** `POST /executors/` passes only `executor_config`, `account_name`, and `controller_id` to `ExecutorService.create_executor`. That service validates the executor config and market readiness, constructs the executor, registers it, and calls `executor.start()`. The inspected route request and service call have no proposal ID, governor receipt, breaker token, or Spectra authorization context.
+- **Direct exchange orders:** `POST /trading/orders` calls `AccountsService.place_trade`. After account/connector/rule/size checks, that method directly invokes `connector.buy(...)` or `connector.sell(...)`. These are exchange-order validation checks, not a Spectra capital-governor authorization.
+- **Direct Gateway swaps:** `POST /swap/execute` resolves a wallet and calls `GatewayClient.execute_swap`, which sends a POST to Gateway's `trading/{router,clmm,amm}/execute-swap` surface. `/swap/execute-quote` similarly calls `execute_quote` and posts to Gateway's router quote-execution surface. The route-level Gateway-online dependency only checks reachability.
+- **Bot start:** `POST /bot-orchestration/start-bot` passes caller-supplied `script` and `conf` values into `BotsOrchestrator.start_bot`, which publishes the `start` command over MQTT. This is a control-plane dispatch, not a governor-checked execution request.
+
+The code paths inspected above show no Spectra governor authorization before these connector, Gateway, executor-start, or MQTT dispatch calls. This is stronger evidence than the earlier route-handler-only review, but it is still a bounded source trace: any separately injected process-level policy or external network restriction must be verified in the final deployment. Until such an independent enforcement point is demonstrated and covered by negative tests, treat these paths as ungoverned for the Spectra threat model.
+
 ## 4. Integration and test plan
 
 1. **Local sync:** fetch API `origin/main`; verify the current local branch is still the reported ancestor; fast-forward only. Preserve the modified compose file and both untracked backups. No reset/clean.
