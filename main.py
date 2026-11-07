@@ -324,14 +324,22 @@ async def lifespan(app: FastAPI):
     # =========================================================================
 
     if SPECTRA_PAPER_ONLY:
-        # Do not initialize connectors, recover/start persisted executors, start
-        # bots/MQTT, or start Gateway/market-data services. Blocking HTTP writes
-        # alone is insufficient: a recovered Hummingbot executor could continue
-        # placing live orders without a new API request.
+        # The connector service independently permits only names ending in
+        # "_paper_trade". This lets Hummingbot's simulated exchange connector
+        # execute paper orders while preventing a live CEX or Gateway connector
+        # from being initialized or lazily created.
         logging.warning(
-            "SPECTRA_PAPER_ONLY=true: all exchange, executor, bot, Gateway, "
-            "and market-data runtimes remain stopped"
+            "SPECTRA_PAPER_ONLY=true: initializing only Hummingbot paper-trade connectors"
         )
+        await connector_service.initialize_all_trading_connectors()
+        await connector_service.reconcile_active_orders()
+
+        # The executor control loop is safe only after connector-level paper
+        # enforcement is active. Do not start bots/MQTT, Gateway, Docker, or
+        # background market-data feeds; paper connectors own their public feed.
+        executor_service.start()
+        await executor_service.recover_positions_from_db()
+        accounts_service.start()
     else:
         # Initialize all trading connectors FIRST (before any service that might use them)
         logging.info("Initializing all trading connectors...")
