@@ -507,6 +507,14 @@ def auth_user(
 @app.get("/spectra/runtime")
 async def get_spectra_runtime(_username: str = Depends(auth_user)):
     """Expose the effective runtime boundary to the local Spectra interface."""
+    connector_service = getattr(app.state, "connector_service", None)
+    paper_connectors = []
+    if SPECTRA_PAPER_ONLY and connector_service is not None:
+        paper_connectors = sorted(
+            f"{account_name}/{connector_name}"
+            for account_name, connectors in connector_service.get_all_trading_connectors().items()
+            for connector_name in connectors
+        )
     return {
         "product": "Spectra Finance",
         "execution_adapter": "Hummingbot API",
@@ -514,8 +522,10 @@ async def get_spectra_runtime(_username: str = Depends(auth_user)):
         "paper_only": SPECTRA_PAPER_ONLY,
         "mutation_guard": "ENABLED" if SPECTRA_PAPER_ONLY else "DISABLED",
         "paper_connectors_only": SPECTRA_PAPER_ONLY,
+        "paper_connector_count": len(paper_connectors),
+        "paper_connectors": paper_connectors,
         "live_exchange_connectors_started": not SPECTRA_PAPER_ONLY,
-        "paper_executor_runtime_started": SPECTRA_PAPER_ONLY,
+        "executor_control_loop_started": True,
         "bot_orchestration_started": not SPECTRA_PAPER_ONLY,
         "live_dispatch_available": not SPECTRA_PAPER_ONLY,
     }
