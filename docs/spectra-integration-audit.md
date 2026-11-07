@@ -194,3 +194,11 @@ Required containment: hard-code or strictly allowlist reviewed Hummingbot image 
 ## Safety boundary
 
 This audit makes no strategy profitability claim and grants no execution authority. No merges to the default branch, deployment, wallet access, exchange order, or live-trading activation are part of this audit.
+
+### Additional launch-path finding — checked-in standalone MCP configuration
+
+A cross-repository source check found a concrete standalone Hummingbot MCP launch path in the Core repository's checked-in `.mcp.json`: it runs `uv run python -m mcp_servers.hummingbot_api` with no `--profile`, no `--agent-slug`, and an empty environment object. Core's `mcp_servers/hummingbot_api/settings.py` explicitly defines the standalone default as `full`, and `get_settings()` parses that default when no profile flag is supplied. The server registers the resolved profile at startup.
+
+This configuration may be intended for local developer use; it is not proof that production currently launches this way. It is nevertheless a real alternate path that must be accounted for in acceptance. It must never receive Spectra production API credentials or be treated as a governed Spectra agent seat. Production launch should be restricted to the supervised Condor spawner, which passes the host-generated agent identity, explicit profile and mutes. Remove or clearly segregate the static full-profile entry from any production runtime configuration, and add a startup test that refuses Spectra credentials when the process has no host-generated Spectra identity or explicit restricted profile.
+
+The new Core documentation-only integration map records this and the PR #31/#40 shared-file port plan: [PR #43 — recovery-safety integration map](https://github.com/andredepaulnash-cmd/spectra-finance-core/pull/43). It is a draft and does not merge or change runtime code.
