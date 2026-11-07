@@ -143,6 +143,8 @@ Required negative tests at the API boundary: no receipt; invalid signature; expi
 
 Until this boundary exists, safest deployment containment is to keep the Hummingbot API private to the trusted local process, deny the Condor/agent direct network route to its write endpoints, and disable nonessential execution/deployment routers. Network isolation is defense in depth, not a replacement for API-side receipt verification.
 
+The public request schemas reinforce this boundary finding: `CreateExecutorRequest` contains `account_name`, `controller_id`, and an arbitrary `executor_config` dictionary, but no proposal ID or governor receipt. `TradeRequest` contains account, connector, pair, side, amount, order type, price and position action, but no Spectra authorization field. The controller ID is an attribution label, not proof of capital approval. The deployment request models similarly accept a credentials profile, image and script/controller configuration without a Core-issued dispatch receipt.
+
 ## 4. Integration and test plan
 
 1. **Local sync:** fetch API `origin/main`; verify the current local branch is still the reported ancestor; fast-forward only. Preserve the modified compose file and both untracked backups. No reset/clean.
