@@ -145,6 +145,18 @@ Until this boundary exists, safest deployment containment is to keep the Humming
 
 The public request schemas reinforce this boundary finding: `CreateExecutorRequest` contains `account_name`, `controller_id`, and an arbitrary `executor_config` dictionary, but no proposal ID or governor receipt. `TradeRequest` contains account, connector, pair, side, amount, order type, price and position action, but no Spectra authorization field. The controller ID is an attribution label, not proof of capital approval. The deployment request models similarly accept a credentials profile, image and script/controller configuration without a Core-issued dispatch receipt.
 
+### Image provenance and deployment path — build is not part of deploy
+
+The API repository's current deployment contract has a reproducibility gap:
+
+- `docker-compose.yml` selects `image: hummingbot/hummingbot-api:latest` and has no `build:` section for the API service.
+- The Makefile's `build` target builds the local image as `hummingbot/hummingbot-api:latest`.
+- The Makefile's `deploy` target runs `docker compose up -d` (with an optional Tailscale overlay) but does not depend on or invoke `make build`.
+- Therefore `make deploy` can start/pull the mutable registry `latest` image rather than the source currently checked out. A successful deploy does not prove the local source was built into the running image.
+- The Dockerfile starts from mutable `continuumio/miniconda3` in both stages, and `environment.yml` contains unpinned Conda dependencies plus unpinned `hummingbot`. The API CI workflow currently compiles a small accounting subset and runs focused tests; it does not build or attest the production Docker image.
+
+Recommended correction (not yet implemented): build a unique immutable image tag from the checked-out source commit and exact dependency lock; require compose to use that exact tag/digest; make deploy refuse when the expected image digest is absent or mismatched; record the source SHA, Core overlay SHA, base-image digest, dependency artifact hashes, final image digest and test report in a machine-readable build attestation. Never deploy `latest` for the Spectra runtime. Keep the current deployment path unchanged until a tested replacement is ready.
+
 ## 4. Integration and test plan
 
 1. **Local sync:** fetch API `origin/main`; verify the current local branch is still the reported ancestor; fast-forward only. Preserve the modified compose file and both untracked backups. No reset/clean.
