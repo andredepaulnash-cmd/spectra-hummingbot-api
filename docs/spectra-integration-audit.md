@@ -84,6 +84,25 @@ The Docker service's `create_hummingbot_instance` ends in Docker SDK `containers
 
 Treat these as execution-capable deployment surfaces in a Spectra runtime. The controller and script payloads must be recursively reviewed and restricted to the approved Spectra execution boundary, or these routes must be disabled for the Spectra deployment. A controller/script allowlist applied only to the MCP tools does not govern direct API deployment.
 
+### Core branch topology — integration must remain staged
+
+The Core work is not one linear PR stack:
+
+- **PR #31 → #32 → #33** is a sequential protected-LIMIT / cash-and-retirement / installed-runtime-repair line. PR #33 adds the five-file Hummingbot Core overlay and a source-bound build recipe.
+- The PR #38 dependency-preparation branch is a descendant of the PR #33 source line (its base is one commit after PR #33); it adds runtime dependency preparation and read-only installed-source attestation. It does not finish the image or Bazzite acceptance.
+- **PR #40** is a separate branch from `spectra-core-phase2`. It adds recovery accounting, selected-recovery ownership locks, dust lifecycle, and partial-attempt handling. It diverges from PR #31: the compared heads are 5 commits ahead and 6 behind their common base.
+- **PR #42** is based on PR #40 and adds weekly-reversal / next-entry research. Its PR diff contains 19 Core paths, 48 test paths and 29 research paths; its next-entry bridges are explicitly default-off paper components and the adaptive-reversal mechanics are paper-only. This is not production activation or evidence of profitability.
+
+The PR #31 and #40 heads modify the same high-risk files, including `capital_governor.py`, `economic_position.py`, `executor_create.py`, `partial_recycle.py`, and `vcap_runtime.py`, but their unique APIs encode different invariants. PR #31 uniquely carries cash-authority/submission-claim and terminal-retirement APIs; PR #40 uniquely carries selected-recovery locks/proposal scopes and partial-attempt runtime guards. A blind merge or cherry-pick can drop one side's capital ownership protections. The integration must select a reviewed base and explicitly port/retest each invariant, not treat green CI as proof that the branches are interchangeable.
+
+All six Core PR workflow runs (#31, #32, #33, #38, #40 and #42) were observed completed successfully in GitHub Actions. These are branch-specific CI results, not a combined-branch test and not live-readiness evidence.
+
+### Runtime evidence — partial success, release blockers remain
+
+PR #38's recorded disposable Python 3.12 trial installed 197 hashed Python artifacts (267,835,299 bytes), passed `pip check`, passed the bounded compiled data-module ABI check, and passed the PR #33 installed-source guard in both resolved and offline-reconstruction virtual environments. That is useful evidence for those exact disposable environments.
+
+The same receipt explicitly records that the complete inherited environment is **not** verified: the original `eip712-structs` extra was excluded from the successful trial; the installed `msgpack-python 0.5.6` and `msgpack 1.2.3` distributions still claim three identical module paths; a proposed sixth packaging overlay is not applied; the complete native Conda environment is not locked; no immutable base-image digest or final API image digest exists; and Bazzite installation is not verified. The cleanup proposal requires a fresh six-overlay build and new wheel identity. Preserve the current five-overlay identity; do not silently modify it.
+
 ## 4. Integration and test plan
 
 1. **Local sync:** fetch API `origin/main`; verify the current local branch is still the reported ancestor; fast-forward only. Preserve the modified compose file and both untracked backups. No reset/clean.
