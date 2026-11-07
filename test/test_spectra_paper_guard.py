@@ -27,6 +27,7 @@ def test_gateway_bot_docker_account_and_script_mutations_are_blocked():
         ("POST", "/scripts/custom"),
         ("POST", "/accounts/credentials"),
         ("POST", "/accounts/gateway/add-wallet"),
+        ("POST", "/portfolio/distribution"),
     )
     for method, path in blocked:
         assert should_block_paper_mutation(method, path), (method, path)
