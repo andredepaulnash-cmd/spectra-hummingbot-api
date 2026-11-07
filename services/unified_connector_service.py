@@ -31,6 +31,11 @@ from hummingbot.core.utils.async_utils import safe_ensure_future
 from utils.file_system import fs_util
 from utils.hummingbot_api_config_adapter import HummingbotAPIConfigAdapter
 from utils.security import BackendAPISecurity
+from utils.spectra_paper_guard import (
+    is_paper_trade_connector_name,
+    paper_only_enabled,
+    require_paper_trade_connector,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +141,7 @@ class UnifiedConnectorService:
         Returns:
             Initialized trading connector
         """
+        require_paper_trade_connector(connector_name)
         cache_key = f"{account_name}:{connector_name}"
 
         # Create lock for this cache key if it doesn't exist
@@ -215,6 +221,7 @@ class UnifiedConnectorService:
         Returns:
             Non-authenticated connector instance
         """
+        require_paper_trade_connector(connector_name)
         if connector_name not in self._data_connectors:
             self._data_connectors[connector_name] = self._create_data_connector(
                 connector_name
@@ -675,6 +682,7 @@ class UnifiedConnectorService:
     ) -> ConnectorBase:
         """Create and fully initialize a trading connector."""
         # Authenticate and create connector
+        require_paper_trade_connector(connector_name)
         connector = self._create_trading_connector(account_name, connector_name)
 
         # Initialize symbol map and trading rules
@@ -740,6 +748,8 @@ class UnifiedConnectorService:
             secrets_manager=self.secrets_manager
         )
 
+        require_paper_trade_connector(connector_name)
+
         # Check if this is a Gateway network connector
         # Gateway connectors are NOT in AllConnectorSettings (those are exchange connectors)
         # Network format: "chain-network" (e.g., "solana-mainnet-beta", "ethereum-mainnet")
@@ -765,6 +775,7 @@ class UnifiedConnectorService:
 
     def _create_data_connector(self, connector_name: str) -> ConnectorBase:
         """Create a non-authenticated data connector."""
+        require_paper_trade_connector(connector_name)
         conn_setting = self._conn_settings.get(connector_name)
         if not conn_setting:
             raise UnknownConnectorError(f"Connector {connector_name} not found")
@@ -1357,7 +1368,15 @@ class UnifiedConnectorService:
         """List connector credentials available for an account."""
         try:
             files = fs_util.list_files(f"credentials/{account_name}/connectors")
-            return [f.replace(".yml", "") for f in files if f.endswith(".yml")]
+            connector_names = [
+                f.replace(".yml", "") for f in files if f.endswith(".yml")
+            ]
+            if paper_only_enabled():
+                connector_names = [
+                    name for name in connector_names
+                    if is_paper_trade_connector_name(name)
+                ]
+            return connector_names
         except FileNotFoundError:
             return []
 
