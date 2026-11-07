@@ -49,6 +49,7 @@ jobs:
             services/unified_connector_service.py \
             services/executor_service.py \
             routers/connectors.py \
+            routers/portfolio.py \
             main.py
 
       - name: Run dependency-light Spectra accounting contract
