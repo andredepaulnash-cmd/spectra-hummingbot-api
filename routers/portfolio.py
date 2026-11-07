@@ -7,6 +7,7 @@ from deps import get_accounts_service
 from models import PaginatedResponse
 from models.trading import PortfolioDistributionFilterRequest, PortfolioHistoryFilterRequest, PortfolioStateFilterRequest
 from services.accounts_service import AccountsService
+from utils.spectra_paper_guard import is_paper_trade_connector_name, paper_only_enabled
 
 router = APIRouter(tags=["Portfolio"], prefix="/portfolio")
 
@@ -32,12 +33,22 @@ async def get_portfolio_state(
     # Only refresh balances if explicitly requested
     if filter_request.refresh:
         await accounts_service.update_account_state(
-            skip_gateway=filter_request.skip_gateway,
+            skip_gateway=filter_request.skip_gateway or paper_only_enabled(),
             account_names=filter_request.account_names,
             connector_names=filter_request.connector_names
         )
 
     all_states = accounts_service.get_accounts_state()
+
+    if paper_only_enabled():
+        all_states = {
+            account_name: {
+                connector_name: connector_state
+                for connector_name, connector_state in account_data.items()
+                if is_paper_trade_connector_name(connector_name)
+            }
+            for account_name, account_data in all_states.items()
+        }
 
     # Apply account name filter first
     if filter_request.account_names:
@@ -106,15 +117,24 @@ async def get_portfolio_history(
         # Apply connector filter to the data if specified. Each history item is
         # {"timestamp": ..., "state": {account_name: {connector_name: [tokens]}}},
         # so connectors live directly under each account inside "state".
-        if filter_request.connector_names:
+        if filter_request.connector_names or paper_only_enabled():
             for item in data:
                 state = item.get("state", {})
                 for account_name, account_data in state.items():
                     if isinstance(account_data, dict):
+                        allowed_connectors = (
+                            set(filter_request.connector_names)
+                            if filter_request.connector_names
+                            else set(account_data.keys())
+                        )
                         filtered_connectors = {
                             connector_name: account_data[connector_name]
-                            for connector_name in filter_request.connector_names
+                            for connector_name in allowed_connectors
                             if connector_name in account_data
+                            and (
+                                not paper_only_enabled()
+                                or is_paper_trade_connector_name(connector_name)
+                            )
                         }
                         state[account_name] = filtered_connectors
         
