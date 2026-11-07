@@ -46,6 +46,9 @@ jobs:
             routers/executors.py \
             services/executor_service.py \
             utils/spectra_paper_guard.py \
+            services/unified_connector_service.py \
+            services/executor_service.py \
+            routers/connectors.py \
             main.py
 
       - name: Run dependency-light Spectra accounting contract
@@ -55,4 +58,5 @@ jobs:
             test/test_exact_position_hold_accounting_wiring.py \
             test/test_executor_order_provenance_contract.py \
             test/test_executor_trade_provenance_contract.py \
-            test/test_spectra_paper_guard.py
+            test/test_spectra_paper_guard.py \
+            test/test_spectra_paper_connector_service.py
