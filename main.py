@@ -513,8 +513,10 @@ async def get_spectra_runtime(_username: str = Depends(auth_user)):
         "mode": "PAPER_ONLY" if SPECTRA_PAPER_ONLY else "LEGACY",
         "paper_only": SPECTRA_PAPER_ONLY,
         "mutation_guard": "ENABLED" if SPECTRA_PAPER_ONLY else "DISABLED",
-        "exchange_connectors_started": not SPECTRA_PAPER_ONLY,
-        "executor_and_bot_runtimes_started": not SPECTRA_PAPER_ONLY,
+        "paper_connectors_only": SPECTRA_PAPER_ONLY,
+        "live_exchange_connectors_started": not SPECTRA_PAPER_ONLY,
+        "paper_executor_runtime_started": SPECTRA_PAPER_ONLY,
+        "bot_orchestration_started": not SPECTRA_PAPER_ONLY,
         "live_dispatch_available": not SPECTRA_PAPER_ONLY,
     }
 
