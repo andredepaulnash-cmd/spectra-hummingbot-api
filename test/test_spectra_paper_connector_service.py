@@ -1,6 +1,11 @@
 import pytest
 from unittest.mock import AsyncMock
 
+# The focused contract CI intentionally installs only lightweight dependencies.
+# Run these service-level tests in the full Hummingbot API environment.
+pytest.importorskip("fastapi")
+pytest.importorskip("hummingbot")
+
 from services.unified_connector_service import UnifiedConnectorService
 
 
