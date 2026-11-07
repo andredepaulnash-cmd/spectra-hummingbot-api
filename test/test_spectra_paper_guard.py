@@ -6,6 +6,7 @@ from utils.spectra_paper_guard import (
     paper_allowed_post_paths,
     require_paper_trade_connector,
     should_block_paper_mutation,
+    validate_paper_connector_configuration,
 )
 
 
@@ -80,3 +81,20 @@ def test_invalid_paper_mode_value_fails_closed(monkeypatch):
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "sometimes")
     with pytest.raises(RuntimeError, match="explicit boolean"):
         require_paper_trade_connector("kraken")
+
+def test_paper_connector_config_rejects_nonempty_secrets(monkeypatch):
+    monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
+    validate_paper_connector_configuration(
+        "kraken_paper_trade",
+        {"api_key": "", "secret_key": None, "trading_pairs": ["BTC-USDT"]},
+    )
+    with pytest.raises(ValueError, match="must not contain"):
+        validate_paper_connector_configuration(
+            "kraken_paper_trade",
+            {"api_key": "not-a-real-key"},
+        )
+    with pytest.raises(ValueError, match="paper-only mode"):
+        validate_paper_connector_configuration(
+            "kraken",
+            {"api_key": ""},
+        )
