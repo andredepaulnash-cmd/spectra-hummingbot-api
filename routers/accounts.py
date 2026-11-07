@@ -139,21 +139,10 @@ async def add_credential(
     Raises:
         HTTPException: 400 if there's an error adding the credentials
     """
-    if paper_only_enabled():
-        try:
-            require_paper_trade_connector(connector_name)
-        except ValueError as e:
-            raise HTTPException(status_code=403, detail=str(e))
-        sensitive_markers = (
-            "api_key", "secret", "password", "private_key", "mnemonic", "seed",
-        )
-        for key, value in credentials.items():
-            normalized_key = str(key).lower()
-            if any(marker in normalized_key for marker in sensitive_markers) and value not in (None, ""):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Spectra paper connector configuration must not contain exchange or wallet secrets.",
-                )
+    try:
+        validate_paper_connector_configuration(connector_name, credentials)
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e))
 
     try:
         await accounts_service.add_credentials(account_name, connector_name, credentials)
