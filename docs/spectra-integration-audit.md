@@ -57,6 +57,22 @@ The API's own executor registry includes position, grid, DCA, arbitrage, TWAP, X
 
 Also trace other API routes and bot/controller orchestration that can start execution; this review confirms the direct executor route but is not a proof that all other routes are closed.
 
+
+### Additional authenticated execution surfaces — verified routes, authorization still unproven
+
+A second pass found that `POST /executors/` is not the only way to cause trading activity. `main.py` applies the same HTTP Basic dependency to the following routers, but Basic authentication proves API identity only; it is not a Spectra capital-governor decision.
+
+- **CEX order placement:** `POST /trading/orders` calls `AccountsService.place_trade` with caller-supplied account, connector, pair, side, amount, order type, price and position action. The route contains no proposal ID, governor receipt, breaker check or Spectra connector/intent validation.
+- **DEX swaps:** `POST /gateway/swap/execute` and `POST /gateway/swap/execute-quote` call the Gateway swap path. The route requires Gateway online and validates connector-specific extra parameters, but the inspected route does not require a Spectra capital authorization.
+- **Liquidity writes:** Gateway CLMM and AMM routers expose write operations including open/add/remove/close/collect-fees and add/remove-liquidity. They are execution-capable wallet operations; the inspected route declarations require Gateway online where shown, not a Spectra proposal or governor receipt.
+- **Bot/controller start:** `POST /bot-orchestration/start-bot` publishes a `start` command for an active bot over MQTT. This can start a preconfigured strategy/controller; the route itself has no Spectra proposal check. The exact controller contents and downstream executor path must be traced before classifying each bot as trading-capable.
+
+These are **confirmed execution-capable API surfaces**, not a claim that every underlying connector or Gateway path has been fully audited. No route-level Spectra gate was present in the inspected handlers. Until lower-level enforcement is demonstrated with adversarial tests, treat every one as a potential route around the MCP-only governor. A localhost bind or Tailscale network boundary reduces reachability but does not provide capital authorization against local authenticated clients.
+
+**Required acceptance tests:** for each route family, prove that missing, mismatched, expired, reused and wrong-scope proposals are rejected before any connector/Gateway/MQTT dispatch; prove halted or missing breaker state fails closed; prove only the approved Kraken USD spot Grid/DCA 1x scope can dispatch in a Spectra deployment; and prove ordinary non-Spectra deployments retain their separately documented behavior. For DEX swaps and liquidity operations, either define an explicit Spectra-governed policy and receipt model or disable those write routes in the Spectra runtime. For bot starts, verify controller allowlists and recursively trace every controller's execution calls.
+
+This is a source-level finding. No requests were sent to the running API, no wallets or exchange accounts were accessed, and no code path was activated.
+
 ## 4. Integration and test plan
 
 1. **Local sync:** fetch API `origin/main`; verify the current local branch is still the reported ancestor; fast-forward only. Preserve the modified compose file and both untracked backups. No reset/clean.
