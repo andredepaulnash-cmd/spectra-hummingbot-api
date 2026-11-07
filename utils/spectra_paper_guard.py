@@ -15,32 +15,12 @@ _MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # intentionally exact: a newly added POST route is blocked until reviewed.
 _READ_ONLY_POST_PATHS = frozenset(
     {
+        # These four handlers are bounded to persisted/local history or executor
+        # state. Live connector and Gateway reads are intentionally not exempt.
         "/executors/search",
-        "/trading/positions",
-        "/trading/orders/active",
         "/trading/orders/search",
         "/trading/trades",
-        "/trading/funding-payments",
-        "/portfolio/state",
         "/portfolio/history",
-        "/portfolio/distribution",
-        "/market-data/candles",
-        "/market-data/historical-candles",
-        "/market-data/prices",
-        "/market-data/rates",
-        "/market-data/funding-info",
-        "/market-data/order-book",
-        "/market-data/order-book/price-for-volume",
-        "/market-data/order-book/volume-for-price",
-        "/market-data/order-book/price-for-quote-volume",
-        "/market-data/order-book/quote-volume-for-price",
-        "/market-data/order-book/vwap-for-volume",
-        "/gateway/swap/quote",
-        "/gateway/swaps/search",
-        "/gateway/clmm/positions_owned",
-        "/gateway/clmm/positions/search",
-        "/gateway/amm/events/search",
-        "/gateway/amm/positions/search",
     }
 )
 
