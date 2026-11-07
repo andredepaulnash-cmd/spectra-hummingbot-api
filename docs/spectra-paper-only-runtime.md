@@ -13,7 +13,7 @@
 - Does not run Docker cleanup during shutdown.
 - Leaves database startup available for persisted history reads.
 
-The HTTP guard runs before route dispatch. The startup gate is equally important: blocking REST writes alone would not stop an already-persisted executor or bot from continuing to place orders.
+The authenticated `GET /spectra/runtime` endpoint reports the effective mode and whether connectors, executor/bot runtimes, and live dispatch are available. The Spectra interface must fail closed when this endpoint is unavailable or reports `LEGACY`. The HTTP guard runs before route dispatch. The startup gate is equally important: blocking REST writes alone would not stop an already-persisted executor or bot from continuing to place orders.
 
 ## Enablement
 
