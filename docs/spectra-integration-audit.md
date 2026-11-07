@@ -47,6 +47,19 @@ The gate is conditional: `mcp_servers/hummingbot_api/settings.py` defaults `agen
 
 The shared Condor toolset code documents a fail-closed Spectra allowlist rule: a missing or empty Spectra `agent.tools` list mutes every known tool. That behavior still needs an installed-runtime test against the actual Spectra agent definition and every supported launch/backend path.
 
+### Spectra MCP allowlist — source path verified, with an important launch caveat
+
+A follow-up traced the Condor spawner and the Spectra agent definition on Core PR #31:
+
+- `agents/spectra/AGENT.md` explicitly allowlists read-only market/portfolio/history/executor-inspection tools, `create_grid_executor`, `create_dca_executor`, `stop_executor`, `delegate`, notification and the Spectra journal tools. It does **not** allow raw order placement, position executors, LP executors, DEX swaps/liquidity, bot/controller deployment, leverage changes, server administration, or arbitrary code execution.
+- `condor.runtime.toolsets.build_mcp_servers_for_session` computes the profile and allowlist mutes, then passes `CONDOR_AGENT_SLUG=agent_slug` into the Hummingbot MCP subprocess environment and passes the same mutes to both MCP servers.
+- `allowlist_mutes` subtracts every tool not named in the Spectra Agent's allowlist. For slug `spectra`, a missing Agent definition or an empty `tools` list mutes **every** known tool rather than widening access.
+- The Hummingbot MCP server registers only the selected profile minus those mutes. Thus, for the normal Condor-spawned Spectra seat using this exact code and agent definition, the intended narrow MCP tool surface is enforced at registration.
+
+Important caveat: the Hummingbot MCP server still defaults to `agent_slug=""` and `tool_profile="full"` when launched standalone or without the Condor spawner. In that mode the Spectra-only executor authorization is not activated and the full tool surface may register. Every production Spectra launch path must therefore prove the host-generated identity and restricted profile/mutes are present; no standalone/full-profile process may be connected to the Spectra API credentials.
+
+This confirms the **MCP seat allowlist design** in source; it does not close the independent REST API routes documented below.
+
 ### Direct REST path — confirmed bypass of the MCP governor
 
 The API exposes authenticated `POST /executors/` in `routers/executors.py`. `main.py` attaches HTTP Basic authentication to this router, but the route calls `ExecutorService.create_executor` directly. That service validates the executor configuration, prepares the market, instantiates the executor, starts it, and persists it; it does not accept or verify a Spectra capital proposal, governor receipt, breaker state, Kraken-only scope, or 1x Spectra authorization.
