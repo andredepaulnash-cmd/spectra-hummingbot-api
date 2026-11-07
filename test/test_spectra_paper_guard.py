@@ -54,7 +54,7 @@ def test_query_parameters_do_not_change_route_policy():
         "POST", "/executors/search?next=/gateway/swap/execute"
     )
     assert should_block_paper_mutation(
-        "POST", "/executors/?redirect=/executors/search"
+        "POST", "/executors/123/resolve-orphan?redirect=/executors/search"
     )
 
 
