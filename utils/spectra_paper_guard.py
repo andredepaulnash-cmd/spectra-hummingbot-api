@@ -20,6 +20,8 @@ _PAPER_POST_PATTERNS = tuple(
     re.compile(pattern)
     for pattern in (
         r"/executors/search",
+        r"/accounts/add-account",
+        r"/accounts/add-credential/[^/]+/[^/]+_paper_trade",
         r"/executors/?",
         r"/executors/[^/]+/stop",
         r"/trading/orders",
