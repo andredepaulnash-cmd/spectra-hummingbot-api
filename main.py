@@ -496,6 +496,21 @@ def auth_user(
     return credentials.username
 
 
+@app.get("/spectra/runtime")
+async def get_spectra_runtime(_username: str = Depends(auth_user)):
+    """Expose the effective runtime boundary to the local Spectra interface."""
+    return {
+        "product": "Spectra Finance",
+        "execution_adapter": "Hummingbot API",
+        "mode": "PAPER_ONLY" if SPECTRA_PAPER_ONLY else "LEGACY",
+        "paper_only": SPECTRA_PAPER_ONLY,
+        "mutation_guard": "ENABLED" if SPECTRA_PAPER_ONLY else "DISABLED",
+        "exchange_connectors_started": not SPECTRA_PAPER_ONLY,
+        "executor_and_bot_runtimes_started": not SPECTRA_PAPER_ONLY,
+        "live_dispatch_available": not SPECTRA_PAPER_ONLY,
+    }
+
+
 # Include all routers with authentication
 app.include_router(docker.router, dependencies=[Depends(auth_user)])
 app.include_router(gateway.router, dependencies=[Depends(auth_user)])
