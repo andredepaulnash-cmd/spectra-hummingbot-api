@@ -116,6 +116,17 @@ The route-to-service trace confirms that several findings are not limited to mis
 
 The code paths inspected above show no Spectra governor authorization before these connector, Gateway, executor-start, or MQTT dispatch calls. This is stronger evidence than the earlier route-handler-only review, but it is still a bounded source trace: any separately injected process-level policy or external network restriction must be verified in the final deployment. Until such an independent enforcement point is demonstrated and covered by negative tests, treat these paths as ungoverned for the Spectra threat model.
 
+### Additional account-risk and container-control writes
+
+The route inventory also found authenticated operations that can change trading exposure or the execution environment:
+
+- `POST /trading/{account_name}/{connector_name}/leverage` delegates to `AccountsService.set_leverage` and then `PerpetualTradingService.set_leverage`.
+- `POST /trading/{account_name}/{connector_name}/position-mode` delegates to `AccountsService.set_position_mode` and then the perpetual connector service.
+- `POST /trading/{account_name}/{connector_name}/orders/{client_order_id}/cancel` directly invokes the connector cancellation API.
+- Docker routes can stop, remove, prune exited containers, and pull images. These are operationally privileged even where they do not themselves submit an order.
+
+The inspected leverage and position-mode route/service chain has no visible Spectra policy receipt or risk-governor check. The cancellation endpoint is a direct connector mutation and must be included in an explicit order-management policy (for example, which bot/order identity may be cancelled). Docker cleanup, removal and image-pull operations should be admin-only and separated from the trading controller. Do not expose the Hummingbot API's broad administrative surface as the Spectra agent's tool surface.
+
 ## 4. Integration and test plan
 
 1. **Local sync:** fetch API `origin/main`; verify the current local branch is still the reported ancestor; fast-forward only. Preserve the modified compose file and both untracked backups. No reset/clean.
