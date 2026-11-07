@@ -157,6 +157,19 @@ The API repository's current deployment contract has a reproducibility gap:
 
 Recommended correction (not yet implemented): build a unique immutable image tag from the checked-out source commit and exact dependency lock; require compose to use that exact tag/digest; make deploy refuse when the expected image digest is absent or mismatched; record the source SHA, Core overlay SHA, base-image digest, dependency artifact hashes, final image digest and test report in a machine-readable build attestation. Never deploy `latest` for the Spectra runtime. Keep the current deployment path unchanged until a tested replacement is ready.
 
+### High-severity deployment trust boundary — caller-selected image runs with credentials and host networking
+
+The deployment trace found an additional container-isolation concern:
+
+- Both `V2ScriptDeployment` and `V2ControllerDeployment` accept an `image` string, defaulting to `hummingbot/hummingbot:latest`; the inspected models validate instance/credential/config names but do not enforce an image allowlist or immutable digest.
+- `DockerService.create_hummingbot_instance` passes `config.image` directly to Docker SDK `containers.run`.
+- The created container receives read-write mounts for the instance `conf` directory (which contains the copied credentials profile), scripts/controllers, data and logs; it uses `network_mode="host"`.
+- The API compose service itself mounts `/var/run/docker.sock`, giving the API Docker-daemon control.
+
+This does not establish an unauthenticated remote exploit: the deployment routes are behind the API's HTTP Basic authentication. It does mean that any caller holding those API credentials and access to the deployment route can request a caller-selected container image that is started with access to the instance credential files and host networking. For Spectra, this is an unacceptable agent-facing privilege boundary unless tightly constrained.
+
+Required containment: hard-code or strictly allowlist reviewed Hummingbot image digests; reject arbitrary registries/tags; separate deployment administration from the agent identity; never mount exchange credentials into an image that is not the approved Hummingbot build; and avoid exposing Docker-socket control to the general agent API. Test that an unapproved image/digest is rejected before Docker is called. Review host-network requirements and reduce container privileges/network reachability where feasible. This is a source-level risk finding, not a claim that the current API credentials have been compromised.
+
 ## 4. Integration and test plan
 
 1. **Local sync:** fetch API `origin/main`; verify the current local branch is still the reported ancestor; fast-forward only. Preserve the modified compose file and both untracked backups. No reset/clean.
