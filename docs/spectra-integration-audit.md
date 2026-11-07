@@ -103,6 +103,8 @@ PR #38's recorded disposable Python 3.12 trial installed 197 hashed Python artif
 
 The same receipt explicitly records that the complete inherited environment is **not** verified: the original `eip712-structs` extra was excluded from the successful trial; the installed `msgpack-python 0.5.6` and `msgpack 1.2.3` distributions still claim three identical module paths; a proposed sixth packaging overlay is not applied; the complete native Conda environment is not locked; no immutable base-image digest or final API image digest exists; and Bazzite installation is not verified. The cleanup proposal requires a fresh six-overlay build and new wheel identity. Preserve the current five-overlay identity; do not silently modify it.
 
+The authenticated Docker router also exposes `POST /docker/start-container/{container_name}`, which calls `DockerService.start_container` and invokes Docker `container.start()` for an existing stopped container. This can reactivate a previously configured Hummingbot instance without going through the MCP governor. Treat container start/restart as an execution dispatch and require the same Spectra identity, controller allowlist, and governor boundary before enabling it in the Spectra runtime. The route is not an authorization-safe substitute for the dedicated start-bot path.
+
 ## 4. Integration and test plan
 
 1. **Local sync:** fetch API `origin/main`; verify the current local branch is still the reported ancestor; fast-forward only. Preserve the modified compose file and both untracked backups. No reset/clean.
