@@ -13,6 +13,13 @@ from hummingbot.client.config import config_helpers
 # Load environment variables early
 load_dotenv()
 
+from utils.spectra_paper_guard import should_block_paper_mutation  # noqa: E402
+
+_paper_only_value = os.getenv("SPECTRA_PAPER_ONLY", "false").strip().lower()
+if _paper_only_value not in {"1", "true", "yes", "0", "false", "no"}:
+    raise RuntimeError("SPECTRA_PAPER_ONLY must be an explicit boolean")
+SPECTRA_PAPER_ONLY = _paper_only_value in {"1", "true", "yes"}
+
 VERSION = "1.0.1"
 
 # Monkey patch save_to_yml to prevent writes to library directory
@@ -279,31 +286,31 @@ async def lifespan(app: FastAPI):
     backtesting_service = BacktestingService()
     docker_service = DockerService()
     gateway_service = GatewayService()
-    # If a secured Gateway is already running but this API lost the shared mTLS certs (e.g. the
-    # API container was recreated without the persisted bots/ mount), regenerate the cert set and
-    # restart the Gateway so it loads a matching server cert. Non-fatal: the API must still boot
-    # even when Docker is unavailable or the Gateway is simply not running.
-    if gateway_use_ssl:
-        try:
-            reconcile = gateway_service.reconcile_certs()
-            if reconcile.get("action") != "none":
-                logging.info(f"Gateway cert reconciliation: {reconcile.get('message')}")
-        except Exception as e:
-            logging.warning(f"Gateway cert reconciliation skipped: {e}")
+    if not SPECTRA_PAPER_ONLY:
+        # If a secured Gateway is already running but this API lost the shared mTLS certs (e.g. the
+        # API container was recreated without the persisted bots/ mount), regenerate the cert set and
+        # restart the Gateway so it loads a matching server cert. Non-fatal: the API must still boot
+        # even when Docker is unavailable or the Gateway is simply not running.
+        if gateway_use_ssl:
+            try:
+                reconcile = gateway_service.reconcile_certs()
+                if reconcile.get("action") != "none":
+                    logging.info(f"Gateway cert reconciliation: {reconcile.get('message')}")
+            except Exception as e:
+                logging.warning(f"Gateway cert reconciliation skipped: {e}")
 
-    # Start the Gateway status monitor only when there is a Gateway to poll. Gating on the
-    # container itself (rather than on cert presence, which is now always true) keeps the 2s
-    # poll loop from spamming errors for the many deployments that never run a Gateway.
-    # Plain-HTTP setups may point at a Gateway this API doesn't manage, so keep polling there.
-    try:
-        gateway_is_running = gateway_service.is_running()
-    except Exception as e:
-        logging.warning(f"Could not determine Gateway container state: {e}")
-        gateway_is_running = False
-    if not gateway_use_ssl or gateway_is_running:
-        GatewayHttpClient.get_instance().start_monitor()
+        # Start the Gateway status monitor only when there is a Gateway to poll.
+        try:
+            gateway_is_running = gateway_service.is_running()
+        except Exception as e:
+            logging.warning(f"Could not determine Gateway container state: {e}")
+            gateway_is_running = False
+        if not gateway_use_ssl or gateway_is_running:
+            GatewayHttpClient.get_instance().start_monitor()
+        else:
+            logging.info("Gateway container not running; status monitor deferred until it is started")
     else:
-        logging.info("Gateway container not running; status monitor deferred until it is started")
+        logging.warning("SPECTRA_PAPER_ONLY=true: Gateway integration and monitoring are disabled")
 
     bot_archiver = BotArchiver(
         settings.aws.api_key,
@@ -315,24 +322,30 @@ async def lifespan(app: FastAPI):
     # 6. Start services
     # =========================================================================
 
-    # Initialize all trading connectors FIRST (before any service that might use them)
-    # This ensures OrdersRecorder is properly attached before any concurrent access
-    logging.info("Initializing all trading connectors...")
-    await connector_service.initialize_all_trading_connectors()
+    if SPECTRA_PAPER_ONLY:
+        # Do not initialize connectors, recover/start persisted executors, start
+        # bots/MQTT, or start Gateway/market-data services. Blocking HTTP writes
+        # alone is insufficient: a recovered Hummingbot executor could continue
+        # placing live orders without a new API request.
+        logging.warning(
+            "SPECTRA_PAPER_ONLY=true: all exchange, executor, bot, Gateway, "
+            "and market-data runtimes remain stopped"
+        )
+    else:
+        # Initialize all trading connectors FIRST (before any service that might use them)
+        logging.info("Initializing all trading connectors...")
+        await connector_service.initialize_all_trading_connectors()
 
-    # Reconcile persisted active orders against the exchange (e.g. after an API
-    # restart/crash that lost in-memory references). Confirmed-closed orders are
-    # marked terminal; still-open orders are re-tracked so they stay cancelable.
-    # Runs after connectors reload their persisted in-flight orders.
-    await connector_service.reconcile_active_orders()
+        # Reconcile persisted active orders against the exchange.
+        await connector_service.reconcile_active_orders()
 
-    bots_orchestrator.start()
-    market_data_service.start()
-    await market_data_service.warmup_tickers()
-    executor_service.start()
-    await executor_service.cleanup_orphaned_executors()
-    await executor_service.recover_positions_from_db()
-    accounts_service.start()
+        bots_orchestrator.start()
+        market_data_service.start()
+        await market_data_service.warmup_tickers()
+        executor_service.start()
+        await executor_service.cleanup_orphaned_executors()
+        await executor_service.recover_positions_from_db()
+        accounts_service.start()
 
     # =========================================================================
     # 7. Store services in app state
@@ -371,15 +384,16 @@ async def lifespan(app: FastAPI):
 
     logging.info("Shutting down services...")
 
-    websocket_manager.shutdown()
-    await executor_ws_manager.shutdown()
-    await bots_orchestrator.stop()
-    await accounts_service.stop()
-    await executor_service.stop()
-    market_data_service.stop()
-    await connector_service.stop_all()
-    GatewayHttpClient.get_instance().stop_monitor()
-    docker_service.cleanup()
+    if not SPECTRA_PAPER_ONLY:
+        websocket_manager.shutdown()
+        await executor_ws_manager.shutdown()
+        await bots_orchestrator.stop()
+        await accounts_service.stop()
+        await executor_service.stop()
+        market_data_service.stop()
+        await connector_service.stop_all()
+        GatewayHttpClient.get_instance().stop_monitor()
+        docker_service.cleanup()
     await db_manager.close()
 
     logging.info("All services stopped")
@@ -408,6 +422,25 @@ app.add_middleware(
 # Compress responses for clients that send Accept-Encoding: gzip. These payloads are highly
 # repetitive JSON and compress ~14x; small responses are left alone via minimum_size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+
+@app.middleware("http")
+async def spectra_paper_only_guard(request: Request, call_next):
+    """Reject all non-query API mutations before any route/service dispatch."""
+    if SPECTRA_PAPER_ONLY and should_block_paper_mutation(
+        request.method, request.url.path
+    ):
+        return JSONResponse(
+            status_code=423,
+            content={
+                "detail": (
+                    "Spectra paper-only mode blocks this mutation. "
+                    "No exchange, executor, Gateway, bot, or Docker action was dispatched."
+                ),
+                "mode": "PAPER_ONLY",
+            },
+        )
+    return await call_next(request)
 
 
 @app.exception_handler(RequestValidationError)
