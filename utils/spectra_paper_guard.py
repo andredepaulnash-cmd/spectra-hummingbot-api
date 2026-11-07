@@ -31,7 +31,6 @@ _PAPER_POST_PATTERNS = tuple(
         r"/trading/[^/]+/[^/]+/orders/[^/]+/cancel",
         r"/portfolio/state",
         r"/portfolio/history",
-        r"/portfolio/distribution",
         r"/market-data/.*",
     )
 )
@@ -100,7 +99,6 @@ def paper_allowed_post_paths() -> tuple[str, ...]:
         "/trading/paper-account/kraken_paper_trade/orders/client-1/cancel",
         "/portfolio/state",
         "/portfolio/history",
-        "/portfolio/distribution",
         "/market-data/prices",
         "/market-data/candles",
     )
