@@ -60,6 +60,25 @@ def require_paper_trade_connector(connector_name: str) -> None:
         )
 
 
+def validate_paper_connector_configuration(
+    connector_name: str, credentials: dict
+) -> None:
+    """Permit only paper connector configs with no exchange/wallet secrets."""
+    if not paper_only_enabled():
+        return
+    require_paper_trade_connector(connector_name)
+    sensitive_markers = (
+        "api_key", "secret", "password", "private_key", "mnemonic", "seed",
+    )
+    for key, value in credentials.items():
+        normalized_key = str(key).lower()
+        if any(marker in normalized_key for marker in sensitive_markers) and value not in (None, ""):
+            raise ValueError(
+                "Spectra paper connector configuration must not contain "
+                "exchange or wallet secrets."
+            )
+
+
 def normalize_path(path: str) -> str:
     """Normalize only the path component; query strings never grant an exemption."""
     normalized = urlsplit(path).path
