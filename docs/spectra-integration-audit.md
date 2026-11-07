@@ -127,6 +127,22 @@ The route inventory also found authenticated operations that can change trading 
 
 The inspected leverage and position-mode route/service chain has no visible Spectra policy receipt or risk-governor check. The cancellation endpoint is a direct connector mutation and must be included in an explicit order-management policy (for example, which bot/order identity may be cancelled). Docker cleanup, removal and image-pull operations should be admin-only and separated from the trading controller. Do not expose the Hummingbot API's broad administrative surface as the Spectra agent's tool surface.
 
+### Recommended enforcement boundary — Core-issued, API-verified dispatch receipt
+
+The current MCP authorization is valuable but is not sufficient as the sole boundary while the Hummingbot REST API remains independently callable. The API itself must reject execution unless Spectra Core has authorized the exact operation.
+
+Recommended design for a later implementation (not yet built):
+
+1. **Core remains the sole policy authority.** It evaluates breaker state, proposal identity, capital reservations, position ownership, allowed strategy, account/connector/pair, amount, leverage, slippage and policy version. It commits/reserves the capital claim before issuing a dispatch receipt.
+2. **Core issues a short-lived signed receipt** binding the exact operation: unique receipt/nonce, proposal ID, intent, account, connector, market, operation/executor type, canonical configuration digest, capital amount, leverage, permitted order/position action, slippage/fee bounds, issue/expiry times and policy version. No wildcard account, connector, pair, or amount.
+3. **The API verifies the receipt at the dispatch boundary** using a pinned public key and a durable one-time receipt ledger. It rejects expired, malformed, wrong-scope, altered-payload, unknown-key, duplicate, already-consumed, or mismatched receipts before connector, Gateway, MQTT, executor, or Docker dispatch.
+4. **Ambiguous outcomes reconcile; they do not retry blindly.** Persist receipt consumption and dispatch state before external calls; after timeout/crash, reconcile by receipt ID and exchange/Gateway order or transaction evidence. A repeated request returns the recorded outcome or a reconciliation-required state, never a second order.
+5. **Every alternate write route is either covered by the same verifier or disabled.** This includes direct trading orders, leverage/position mode, executor creation, DEX swaps/liquidity, bot start/deploy, Docker container start, and any controller/script deployment path. Reads may remain separately available with least-privilege credentials.
+
+Required negative tests at the API boundary: no receipt; invalid signature; expired receipt; replay; receipt for another account/connector/pair; config digest changed after signing; amount or leverage above scope; unsupported executor; HALTED Core state; wrong policy version; and a receipt consumed by a competing concurrent request. Assert that each case is rejected **before** any connector/Gateway/MQTT/Docker call. Positive tests must prove exactly one dispatch for one valid receipt, including timeout/restart/reconciliation cases.
+
+Until this boundary exists, safest deployment containment is to keep the Hummingbot API private to the trusted local process, deny the Condor/agent direct network route to its write endpoints, and disable nonessential execution/deployment routers. Network isolation is defense in depth, not a replacement for API-side receipt verification.
+
 ## 4. Integration and test plan
 
 1. **Local sync:** fetch API `origin/main`; verify the current local branch is still the reported ancestor; fast-forward only. Preserve the modified compose file and both untracked backups. No reset/clean.
