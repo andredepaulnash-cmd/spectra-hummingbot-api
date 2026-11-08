@@ -278,14 +278,21 @@ async def lifespan(app: FastAPI):
     # 5. Other Services
     # =========================================================================
 
-    bots_orchestrator = BotsOrchestrator(
-        broker_host=settings.broker.host,
-        broker_port=settings.broker.port,
-        broker_username=settings.broker.username,
-        broker_password=settings.broker.password,
-        db_manager=db_manager,
-        performance_dump_interval=settings.broker.performance_dump_interval
-    )
+    # BotsOrchestrator constructs a Docker SDK client immediately. Do not even
+    # instantiate it in Spectra paper mode: the alpha container intentionally has
+    # no host Docker/Podman socket, and paper mode never starts bot/MQTT orchestration.
+    bots_orchestrator = None
+    if not SPECTRA_PAPER_ONLY:
+        bots_orchestrator = BotsOrchestrator(
+            broker_host=settings.broker.host,
+            broker_port=settings.broker.port,
+            broker_username=settings.broker.username,
+            broker_password=settings.broker.password,
+            db_manager=db_manager,
+            performance_dump_interval=settings.broker.performance_dump_interval
+        )
+    else:
+        logging.info("SPECTRA_PAPER_ONLY=true: BotsOrchestrator not constructed")
 
     backtesting_service = BacktestingService()
     docker_service = DockerService()
