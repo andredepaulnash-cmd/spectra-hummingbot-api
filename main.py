@@ -15,6 +15,7 @@ from hummingbot.client.config import config_helpers
 load_dotenv()
 
 from utils.spectra_paper_guard import (  # noqa: E402
+    configured_paper_connectors,
     paper_only_enabled,
     should_block_paper_mutation,
 )
@@ -346,6 +347,21 @@ async def lifespan(app: FastAPI):
             "SPECTRA_PAPER_ONLY=true: initializing only Hummingbot paper-trade connectors"
         )
         await connector_service.initialize_all_trading_connectors()
+        # Paper connectors are keyless. Initialize the explicitly configured
+        # *_paper_trade connectors directly from conf_client.yml-backed settings;
+        # do not create fake exchange credential files or ask for API keys.
+        paper_connector_names = configured_paper_connectors()
+        if paper_connector_names:
+            account_names = accounts_service.list_accounts()
+            for account_name in account_names:
+                for connector_name in paper_connector_names:
+                    await connector_service.get_trading_connector(
+                        account_name, connector_name
+                    )
+            logging.info(
+                "Initialized configured paper connectors: %s",
+                ", ".join(paper_connector_names),
+            )
         await connector_service.reconcile_active_orders()
 
         # The executor control loop is safe only after connector-level paper
