@@ -1,17 +1,8 @@
-"""Refuse to start against a hummingbot core that predates what this API reads.
+"""Refuse to start against an unreviewed Hummingbot core package.
 
-``environment.yml`` installs ``hummingbot`` unpinned from PyPI, because the changes this
-version depends on are not in a release yet. That makes the install order load-bearing:
-build the image before the core ships and the API comes up against a core without the
-fields it reads.
-
-Nothing complains when that happens. ``_persist_executor_completed`` reads the executor's
-figures inside a broad ``except Exception`` that logs at DEBUG and substitutes zeros, so a
-missing attribute does not fail — it books every executor's pnl, fees, filled amount and
-volume as 0 and says nothing. A whole deployment of silently zeroed accounting is a worse
-outcome than not booting, so this check turns that into a startup error naming the field.
-
-Drop a name from here once the release carrying it is the oldest one this API supports.
+The environment pins the PyPI core package version and this guard checks the
+installed distribution metadata before any API services start. The additional
+surface list remains available for any future field-level compatibility checks.
 """
 from importlib.metadata import PackageNotFoundError, version
 from typing import List, Tuple
