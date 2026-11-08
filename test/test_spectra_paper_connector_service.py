@@ -167,3 +167,29 @@ def test_paper_data_connector_uses_base_exchange_class_without_auth(monkeypatch)
     assert connector.kwargs == {"trading_required": False}
     assert init_calls[0]["trading_required"] is False
     assert init_calls[0]["api_keys"] == {}
+
+
+@pytest.mark.asyncio
+async def test_native_paper_adapter_skips_exchange_py_base_startup_lifecycle(monkeypatch):
+    monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
+
+    class NativePaperAdapter:
+        in_flight_orders = {}
+
+    connector = NativePaperAdapter()
+    service = UnifiedConnectorService.__new__(UnifiedConnectorService)
+    service._create_trading_connector = lambda _account, _name: connector
+    service.db_manager = None
+    service._metrics_collectors = {}
+    service._rate_provider = None
+    service._start_connector_network = AsyncMock(
+        side_effect=AssertionError("paper order-book tracker must start lazily")
+    )
+
+    initialized = await service._create_and_initialize_trading_connector(
+        "master_account",
+        "kraken_paper_trade",
+    )
+
+    assert initialized is connector
+    service._start_connector_network.assert_not_awaited()
