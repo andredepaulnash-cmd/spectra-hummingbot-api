@@ -179,10 +179,20 @@ jobs:
           assert rules["BTC-USD"]["supports_limit_orders"] is True, rules
           print("Verified: Kraken paper connector resolves live public market rules through its keyless base connector.")
           PY
-          curl -fsS -u "$API_AUTH" -H "Content-Type: application/json" \
+          set +e
+          curl -sS -u "$API_AUTH" -H "Content-Type: application/json" \
             -d '{"connector_name":"kraken_paper_trade","trading_pair":"BTC-USD","account_name":"master_account","timeout":30}' \
             http://127.0.0.1:8000/market-data/trading-pair/add \
-            > "$RUNNER_TEMP/kraken-paper-pair.json"
+            -o "$RUNNER_TEMP/kraken-paper-pair.json" -w '%{http_code}' \
+            > "$RUNNER_TEMP/kraken-paper-pair-status.txt"
+          PAIR_STATUS=$(cat "$RUNNER_TEMP/kraken-paper-pair-status.txt")
+          set -e
+          if [ "$PAIR_STATUS" != "200" ]; then
+            echo "Kraken paper trading-pair/add returned HTTP $PAIR_STATUS:"
+            cat "$RUNNER_TEMP/kraken-paper-pair.json"
+            docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --no-color hummingbot-api | tail -n 200
+            exit 1
+          fi
           python - <<'PY'
           import json
           import os
