@@ -100,6 +100,7 @@ jobs:
           BROKER_PASSWORD=$BROKER_PASS
           BROKER_DASHBOARD_PASSWORD=$BROKER_DASH_PASS
           SPECTRA_PAPER_ONLY=true
+          SPECTRA_PAPER_CONNECTORS=kraken_paper_trade
           SPECTRA_ALLOW_LIVE_EXECUTION=false
           SPECTRA_REQUIRE_CORE_RECEIPTS=true
           SPECTRA_DISPATCH_POLICY_VERSION=spectra-policy-v1
@@ -140,12 +141,6 @@ jobs:
             docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --tail=200
             exit 1
           }
-          curl -fsS -u "$API_AUTH" -H 'Content-Type: application/json' \
-            -X POST -d '{}' \
-            http://127.0.0.1:8000/accounts/add-credential/master_account/kraken_paper_trade || {
-              docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --tail=240
-              exit 1
-            }
           for attempt in $(seq 1 180); do
             if curl -fsS -u "$API_AUTH" http://127.0.0.1:8000/spectra/runtime > "$RUNNER_TEMP/spectra-runtime.json"; then
               if python -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if any(n.endswith("/kraken_paper_trade") for n in d.get("paper_connectors", [])) else 1)' "$RUNNER_TEMP/spectra-runtime.json"; then
