@@ -47,3 +47,12 @@ The API container's exact `conf_client.yml` path and installed Hummingbot core r
 ## Tests
 
 `test/test_spectra_paper_guard.py` verifies the exact allowlist and representative execution, Gateway, Docker, bot, script, and account mutation blocks. Focused API CI also compiles `main.py` and the guard module.
+
+
+## Pinned Hummingbot core and local API image
+
+The Spectra API environment pins the Hummingbot Python package to `20260922`, and startup independently checks the installed package metadata against that exact version. A mismatch or missing package stops startup instead of silently running against a different executor/connector surface.
+
+The Docker Compose service builds this repository's Dockerfile into the local `spectra-finance/hummingbot-api:local` image. `make deploy` now depends on `make build`, so deployment does not silently pull the mutable upstream `hummingbot/hummingbot-api:latest` image instead of the Spectra-reviewed source. The Miniconda base image and the remaining transitive Python/Conda dependencies are still mutable; a complete digest lock and image attestation remain future hardening work.
+
+The selected package version is an available Hummingbot PyPI release (20260922). It is a compatibility baseline for the Spectra paper runtime, not proof of the full connector integration; the expanded local/API-image paper test remains required before the product can be called operational.
