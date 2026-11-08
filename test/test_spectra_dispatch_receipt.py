@@ -27,17 +27,21 @@ def _token(
     private, body, *, now=1000, path="/executors", method="POST",
     connector_name="kraken_paper_trade", trading_pair="XRP-USD",
     policy_version="spectra-policy-v1", amount="20",
+    operation="create_executor", executor_id=None, intent="ENTRY",
 ):
-    config_hash = receipts.canonical_body_sha256(body["executor_config"])
+    if operation == "create_executor":
+        config_hash = receipts.canonical_body_sha256(body["executor_config"])
+    else:
+        config_hash = receipts.canonical_body_sha256({"executor_id": executor_id})
     payload = {
         "version": 1,
         "receipt_id": "receipt_" + "a" * 32,
         "proposal_id": "proposal-123",
-        "intent": "ENTRY",
+        "intent": intent,
         "account_name": "paper-account",
         "connector_name": connector_name,
         "trading_pair": trading_pair,
-        "operation": "create_executor",
+        "operation": operation,
         "amount": amount,
         "config_sha256": config_hash,
         "body_sha256": receipts.canonical_body_sha256(body),
@@ -47,6 +51,8 @@ def _token(
         "expires_at": now + 30,
         "policy_version": policy_version,
     }
+    if executor_id is not None:
+        payload["executor_id"] = executor_id
     payload_bytes = receipts.canonical_json(payload)
     signature = private.sign(payload_bytes)
     return _encoded(payload_bytes) + "." + _encoded(signature)
@@ -87,6 +93,63 @@ def test_valid_receipt_is_verified_and_consumed_once(monkeypatch, tmp_path):
             body=body,
             now=1002,
             db_path=tmp_path / "receipts.sqlite3",
+        )
+
+
+def test_stop_executor_receipt_binds_exact_executor_and_keep_position_body(monkeypatch, tmp_path):
+    private = _keypair(monkeypatch)
+    body = {"keep_position": True}
+    token = _token(
+        private,
+        body,
+        path="/executors/executor-123/stop",
+        operation="stop_executor",
+        executor_id="executor-123",
+        intent="EXIT",
+        amount="15",
+    )
+    payload = receipts.verify_and_consume_receipt(
+        token,
+        method="POST",
+        path="/executors/executor-123/stop",
+        body=body,
+        now=1001,
+        db_path=tmp_path / "stop-receipts.sqlite3",
+    )
+    assert payload["operation"] == "stop_executor"
+    assert payload["executor_id"] == "executor-123"
+
+    with pytest.raises(receipts.SpectraDispatchReceiptError, match="already been consumed"):
+        receipts.verify_and_consume_receipt(
+            token,
+            method="POST",
+            path="/executors/executor-123/stop",
+            body=body,
+            now=1002,
+            db_path=tmp_path / "stop-receipts.sqlite3",
+        )
+
+
+def test_stop_executor_receipt_cannot_be_replayed_for_another_executor(monkeypatch, tmp_path):
+    private = _keypair(monkeypatch)
+    body = {"keep_position": True}
+    token = _token(
+        private,
+        body,
+        path="/executors/executor-123/stop",
+        operation="stop_executor",
+        executor_id="executor-123",
+        intent="EXIT",
+        amount="15",
+    )
+    with pytest.raises(receipts.SpectraDispatchReceiptError, match="HTTP scope"):
+        receipts.verify_and_consume_receipt(
+            token,
+            method="POST",
+            path="/executors/executor-456/stop",
+            body=body,
+            now=1001,
+            db_path=tmp_path / "stop-receipts.sqlite3",
         )
 
 
