@@ -64,3 +64,13 @@ jobs:
             test/test_spectra_paper_connector_service.py \
             test/test_core_compatibility.py \
             test/test_spectra_dispatch_receipt.py
+
+  build-paper-api-image:
+    name: Build Spectra paper API container
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Build the exact alpha API image
+        run: docker build --pull --progress=plain -t spectra-finance/hummingbot-api:ci -f Dockerfile .
