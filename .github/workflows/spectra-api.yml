@@ -73,4 +73,85 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Build the exact alpha API image
-        run: docker build --pull --progress=plain -t spectra-finance/hummingbot-api:ci -f Dockerfile .
+        run: docker build --pull --progress=plain -t spectra-finance/hummingbot-api:local -f Dockerfile .
+      - name: Checkout matching Spectra Core alpha helpers
+        uses: actions/checkout@v4
+        with:
+          repository: andredepaulnash-cmd/spectra-finance-core
+          ref: alpha/one-command-paper-demo-20261108
+          path: spectra-core
+      - name: Prepare paper-only runtime configuration
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check pyyaml cryptography
+          API_USER=spectra_alpha
+          API_PASS="$(python -c 'import secrets; print(secrets.token_hex(24))')"
+          CONFIG_PASS="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+          BROKER_USER="spectra_ci"
+          BROKER_PASS="$(python -c 'import secrets; print(secrets.token_hex(24))')"
+          BROKER_DASH_PASS="$(python -c 'import secrets; print(secrets.token_hex(24))')"
+          cat > .env <<EOF
+          API_BIND=127.0.0.1
+          DB_BIND=127.0.0.1
+          USERNAME=$API_USER
+          PASSWORD=$API_PASS
+          CONFIG_PASSWORD=$CONFIG_PASS
+          BROKER_USERNAME=$BROKER_USER
+          BROKER_PASSWORD=$BROKER_PASS
+          BROKER_DASHBOARD_PASSWORD=$BROKER_DASH_PASS
+          SPECTRA_PAPER_ONLY=true
+          SPECTRA_ALLOW_LIVE_EXECUTION=false
+          SPECTRA_REQUIRE_CORE_RECEIPTS=true
+          SPECTRA_DISPATCH_POLICY_VERSION=spectra-policy-v1
+          EOF
+          mkdir -p .emqx bots/credentials/master_account
+          chmod 600 .env
+          printf 'user_id,password,is_superuser\n%s,%s,false\n' "$BROKER_USER" "$BROKER_PASS" > .emqx/auth-bootstrap.csv
+          chmod 700 .emqx
+          chmod 644 .emqx/auth-bootstrap.csv
+          python spectra-core/scripts/configure_alpha_paper_connector.py --config bots/credentials/master_account/conf_client.yml
+          cat > "$RUNNER_TEMP/spectra-core.env" <<'EOF'
+          SPECTRA_PAPER_ONLY=true
+          SPECTRA_ALLOW_LIVE_EXECUTION=false
+          SPECTRA_DISPATCH_POLICY_VERSION=spectra-policy-v1
+          EOF
+          python spectra-core/scripts/generate_spectra_dispatch_keys.py --core-env "$RUNNER_TEMP/spectra-core.env" --api-env .env
+          chmod 600 .env
+      - name: Start paper-only API without host container socket
+        shell: bash
+        run: |
+          sed \\
+            -e '\\|/var/run/docker.sock:/var/run/docker.sock|d' \\
+            -e '/extra_hosts:/d' \\
+            -e '/host.docker.internal:host-gateway/d' \\
+            -e 's/container_name: hummingbot-api/container_name: spectra-ci-hummingbot-api/' \\
+            -e 's/container_name: hummingbot-broker/container_name: spectra-ci-hummingbot-broker/' \\
+            -e 's/container_name: hummingbot-postgres/container_name: spectra-ci-hummingbot-postgres/' \\
+            docker-compose.yml > docker-compose.alpha-ci.yml
+          ! grep -Eq 'docker.sock|host.docker.internal|host-gateway' docker-compose.alpha-ci.yml
+          docker compose -p spectra-ci -f docker-compose.alpha-ci.yml up -d
+          for attempt in $(seq 1 180); do
+            if curl -fsS -u "spectra_alpha:$(sed -n 's/^PASSWORD=//p' .env)" http://127.0.0.1:8000/spectra/runtime > "$RUNNER_TEMP/spectra-runtime.json"; then
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS -u "spectra_alpha:$(sed -n 's/^PASSWORD=//p' .env)" http://127.0.0.1:8000/spectra/runtime > "$RUNNER_TEMP/spectra-runtime.json" || {
+            docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --tail=200
+            exit 1
+          }
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          runtime = json.loads(Path(__import__("os").environ["RUNNER_TEMP"] + "/spectra-runtime.json").read_text())
+          assert runtime["mode"] == "PAPER_ONLY", runtime
+          assert runtime["paper_only"] is True, runtime
+          assert runtime["paper_connectors_only"] is True, runtime
+          assert runtime["live_dispatch_available"] is False, runtime
+          print("Spectra API runtime reports PAPER_ONLY; live dispatch is unavailable.")
+          PY
+          grep -q '^SPECTRA_PAPER_ONLY=true .env
+          grep -q '^SPECTRA_ALLOW_LIVE_EXECUTION=false .env
+      - name: Stop paper-only API stack
+        if: always()
+        run: docker compose -p spectra-ci -f docker-compose.alpha-ci.yml down -v || true
