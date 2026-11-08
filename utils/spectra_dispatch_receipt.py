@@ -154,6 +154,8 @@ def verify_and_consume_receipt(
         "connector_name",
         "trading_pair",
         "operation",
+        "amount",
+        "config_sha256",
         "policy_version",
     )
     if any(not isinstance(payload.get(field), str) or not payload[field].strip() for field in required):
