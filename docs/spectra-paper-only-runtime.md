@@ -22,6 +22,7 @@ Set the following in the API process environment before startup. For the Kraken 
 
 ```dotenv
 SPECTRA_PAPER_ONLY=true
+SPECTRA_PAPER_CONNECTORS=kraken_paper_trade
 ```
 
 Accepted boolean spellings are `true/false`, `1/0`, and `yes/no` (case-insensitive). Any other value fails startup rather than silently disabling the guard.
