@@ -145,6 +145,10 @@ def verify_and_consume_receipt(
     actual_body_hash = canonical_body_sha256(body)
     if payload.get("body_sha256") != actual_body_hash:
         raise SpectraDispatchReceiptError("Spectra dispatch receipt body digest does not match")
+    if isinstance(body, dict) and "executor_config" in body:
+        config_hash = canonical_body_sha256(body["executor_config"])
+        if payload.get("config_sha256") != config_hash:
+            raise SpectraDispatchReceiptError("Spectra dispatch receipt executor config digest does not match")
 
     required = (
         "receipt_id",
