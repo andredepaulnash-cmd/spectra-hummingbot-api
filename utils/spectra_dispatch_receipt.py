@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import re
+import base64
 import sqlite3
 import time
 from pathlib import Path
@@ -229,8 +231,10 @@ def verify_and_consume_receipt(
 class SpectraDispatchReceiptMiddleware:
     """Pure ASGI middleware; consumes receipts before protected route dispatch."""
 
-    def __init__(self, app):
+    def __init__(self, app, username: str | None = None, password: str | None = None):
         self.app = app
+        self.username = username
+        self.password = password
         configured = os.getenv("SPECTRA_REQUIRE_CORE_RECEIPTS", "true").strip().lower()
         if configured not in {"1", "true", "yes", "0", "false", "no"}:
             raise RuntimeError("SPECTRA_REQUIRE_CORE_RECEIPTS must be an explicit boolean")
@@ -259,6 +263,34 @@ class SpectraDispatchReceiptMiddleware:
                 break
         body_bytes = b"".join(body_parts)
         headers = {k.lower(): v for k, v in scope.get("headers", [])}
+        authorization = headers.get(b"authorization", b"")
+        try:
+            scheme, encoded_credentials = authorization.decode("ascii").split(" ", 1)
+            supplied = base64.b64decode(encoded_credentials, validate=True).decode("utf-8")
+            supplied_username, supplied_password = supplied.split(":", 1)
+        except Exception:
+            supplied_username, supplied_password, scheme = "", "", ""
+        if (
+            scheme.lower() != "basic"
+            or self.username is None
+            or self.password is None
+            or not hmac.compare_digest(supplied_username, self.username)
+            or not hmac.compare_digest(supplied_password, self.password)
+        ):
+            response_body = b'{"detail":"Not authenticated"}'
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"www-authenticate", b'Basic realm="Hummingbot API"'),
+                        (b"content-length", str(len(response_body)).encode("ascii")),
+                    ],
+                }
+            )
+            await send({"type": "http.response.body", "body": response_body})
+            return
         token = headers.get(b"x-spectra-dispatch-receipt", b"").decode("ascii", "ignore")
         try:
             body = json.loads(body_bytes) if body_bytes else {}
