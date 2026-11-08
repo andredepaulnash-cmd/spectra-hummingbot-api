@@ -40,10 +40,18 @@ _PAPER_POST_PATTERNS = tuple(
 
 def paper_only_enabled() -> bool:
     """Read the mode at call time so every service shares one strict setting."""
-    value = os.getenv("SPECTRA_PAPER_ONLY", "false").strip().lower()
+    value = os.getenv("SPECTRA_PAPER_ONLY", "true").strip().lower()
     if value not in {"1", "true", "yes", "0", "false", "no"}:
         raise RuntimeError("SPECTRA_PAPER_ONLY must be an explicit boolean")
-    return value in {"1", "true", "yes"}
+    enabled = value in {"1", "true", "yes"}
+    if not enabled:
+        allow_live = os.getenv("SPECTRA_ALLOW_LIVE_EXECUTION", "false").strip().lower()
+        if allow_live not in {"1", "true", "yes"}:
+            raise RuntimeError(
+                "Spectra live execution is disabled in this build; "
+                "SPECTRA_ALLOW_LIVE_EXECUTION requires separate explicit authorization"
+            )
+    return enabled
 
 
 def is_paper_trade_connector_name(connector_name: str) -> bool:
