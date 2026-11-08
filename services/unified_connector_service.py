@@ -422,7 +422,9 @@ class UnifiedConnectorService:
                 bids, asks = ob.snapshot
                 if len(bids) > 0 and len(asks) > 0:
                     logger.info(f"Order book for {trading_pair} already initialized")
-                    return True
+                    return self._ensure_paper_trade_market_ready(
+                        connector_name, connector
+                    )
             except Exception:
                 pass
 
@@ -458,8 +460,34 @@ class UnifiedConnectorService:
             if not success:
                 return False
 
-        # Wait for order book to have data
-        return await self._wait_for_order_book(tracker, trading_pair, timeout)
+        # PaperTradeExchange lazily constructs its simulated market from the
+        # now-ready base-exchange order book. Touch its readiness property only
+        # after the tracker has a valid snapshot.
+        if not await self._wait_for_order_book(tracker, trading_pair, timeout):
+            return False
+        return self._ensure_paper_trade_market_ready(connector_name, connector)
+
+    def _ensure_paper_trade_market_ready(
+        self, connector_name: str, connector
+    ) -> bool:
+        if not connector_name.endswith("_paper_trade"):
+            return True
+        try:
+            if not connector.ready:
+                logger.error(
+                    "Native paper market for %s did not become ready",
+                    connector_name,
+                )
+                return False
+            return True
+        except Exception as e:
+            logger.error(
+                "Native paper market initialization failed for %s: %s",
+                connector_name,
+                e,
+                exc_info=True,
+            )
+            return False
 
     def _is_tracker_running(self, tracker) -> bool:
         """Check if the order book tracker is running."""
