@@ -13,10 +13,13 @@ outcome than not booting, so this check turns that into a startup error naming t
 
 Drop a name from here once the release carrying it is the oldest one this API supports.
 """
+from importlib.metadata import PackageNotFoundError, version
 from typing import List, Tuple
 
 # (import path, attribute, what it is for) — each one a field this API reads off the
 # core and cannot substitute.
+PINNED_CORE_VERSION = "20260922"
+
 REQUIRED_CORE_SURFACE: List[Tuple[str, str, str]] = [
     # Empty on purpose. This guard exists for a core field this API reads that a released
     # hummingbot may not carry yet; there is no such field right now. volume_traded_quote
@@ -32,7 +35,21 @@ def _resolve(path: str):
 
 
 def require_core_surface() -> None:
-    """Raise if the installed hummingbot is missing anything this API reads."""
+    """Require the reviewed Hummingbot package before starting API services."""
+    try:
+        installed_version = version("hummingbot")
+    except PackageNotFoundError as exc:
+        raise RuntimeError(
+            f"Required Hummingbot core {PINNED_CORE_VERSION} is not installed."
+        ) from exc
+
+    if installed_version != PINNED_CORE_VERSION:
+        raise RuntimeError(
+            "Unsupported Hummingbot core version: "
+            f"expected {PINNED_CORE_VERSION}, found {installed_version}. "
+            "Rebuild the API image from environment.yml before starting."
+        )
+
     missing = []
     for path, attribute, purpose in REQUIRED_CORE_SURFACE:
         try:
