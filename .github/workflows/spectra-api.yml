@@ -62,4 +62,5 @@ jobs:
             test/test_executor_trade_provenance_contract.py \
             test/test_spectra_paper_guard.py \
             test/test_spectra_paper_connector_service.py \
-            test/test_core_compatibility.py
+            test/test_core_compatibility.py \
+            test/test_spectra_dispatch_receipt.py
