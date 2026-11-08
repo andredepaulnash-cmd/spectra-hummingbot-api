@@ -912,9 +912,17 @@ class MarketDataService:
             Dictionary mapping trading pairs to their rules
         """
         try:
-            connector = self._connector_service.get_best_connector_for_market(
-                connector_name, account_name
-            )
+            if connector_name.endswith("_paper_trade"):
+                # PaperTradeExchange is an ExchangeBase wrapper and deliberately
+                # does not implement ExchangePyBase.trading_rules. Resolve rules
+                # through its keyless base-exchange data connector instead.
+                connector = self._connector_service.get_data_connector(
+                    connector_name
+                )
+            else:
+                connector = self._connector_service.get_best_connector_for_market(
+                    connector_name, account_name
+                )
 
             if not connector:
                 return {"error": f"No connector available for {connector_name}"}
