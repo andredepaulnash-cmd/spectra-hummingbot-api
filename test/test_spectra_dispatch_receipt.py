@@ -1,4 +1,7 @@
+import asyncio
 import base64
+import time
+
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -160,3 +163,54 @@ def test_missing_public_key_fails_closed(monkeypatch, tmp_path):
 )
 def test_protected_mutation_route_classification(method, path, expected):
     assert receipts.protected_mutation(method, path) is expected
+
+
+def test_middleware_authenticates_before_consuming_receipt(monkeypatch, tmp_path):
+    private = _keypair(monkeypatch)
+    monkeypatch.setenv("SPECTRA_DISPATCH_RECEIPT_DB", str(tmp_path / "middleware.sqlite3"))
+    body = _body()
+    token = _token(private, body, now=time.time())
+    captured = []
+
+    async def downstream(scope, receive, send):
+        captured.append(scope["state"]["spectra_dispatch_receipt"]["proposal_id"])
+        await receive()
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    middleware = receipts.SpectraDispatchReceiptMiddleware(
+        downstream, username="user", password="pass"
+    )
+
+    async def invoke(with_auth):
+        headers = [(b"x-spectra-dispatch-receipt", token.encode("ascii"))]
+        if with_auth:
+            headers.append(
+                (b"authorization", b"Basic " + base64.b64encode(b"user:pass"))
+            )
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/executors/",
+            "headers": headers,
+            "state": {},
+        }
+        sent = []
+        messages = [{"type": "http.request", "body": receipts.canonical_json(body), "more_body": False}]
+
+        async def receive():
+            return messages.pop(0) if messages else {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            sent.append(message)
+
+        await middleware(scope, receive, send)
+        return sent
+
+    unauthorized = asyncio.run(invoke(False))
+    assert unauthorized[0]["status"] == 401
+    assert captured == []
+
+    accepted = asyncio.run(invoke(True))
+    assert accepted[0]["status"] == 204
+    assert captured == ["proposal-123"]
