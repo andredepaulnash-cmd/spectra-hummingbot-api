@@ -67,13 +67,17 @@ def test_paper_connector_suffix_is_explicit():
     assert not is_paper_trade_connector_name("ethereum-mainnet")
 
 
-def test_live_connectors_are_rejected_only_when_paper_mode_is_enabled(monkeypatch):
+def test_live_connectors_require_a_separate_explicit_authorization_gate(monkeypatch):
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
     require_paper_trade_connector("kraken_paper_trade")
     with pytest.raises(ValueError, match="paper-only mode"):
         require_paper_trade_connector("kraken")
 
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "false")
+    with pytest.raises(RuntimeError, match="separate explicit authorization"):
+        require_paper_trade_connector("kraken")
+
+    monkeypatch.setenv("SPECTRA_ALLOW_LIVE_EXECUTION", "true")
     require_paper_trade_connector("kraken")
 
 
