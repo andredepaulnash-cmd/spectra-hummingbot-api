@@ -159,22 +159,37 @@ def verify_and_consume_receipt(
     actual_body_hash = canonical_body_sha256(body)
     if payload.get("body_sha256") != actual_body_hash:
         raise SpectraDispatchReceiptError("Spectra dispatch receipt body digest does not match")
-    if isinstance(body, dict) and "executor_config" in body:
+    operation = payload.get("operation")
+    if operation == "create_executor":
+        if expected_method != "POST" or expected_path != "/executors":
+            raise SpectraDispatchReceiptError("Executor creation receipt has an invalid HTTP scope")
+        if not isinstance(body, dict) or "executor_config" not in body:
+            raise SpectraDispatchReceiptError("Executor creation receipt requires executor_config")
         config = body["executor_config"]
-        config_hash = canonical_body_sha256(config)
-        if payload.get("config_sha256") != config_hash:
+        if payload.get("config_sha256") != canonical_body_sha256(config):
             raise SpectraDispatchReceiptError("Spectra dispatch receipt executor config digest does not match")
-        if normalize_path(path) == "/executors":
-            if payload.get("operation") != "create_executor":
-                raise SpectraDispatchReceiptError("Spectra dispatch receipt operation does not match executor creation")
-            if body.get("account_name") != payload.get("account_name"):
-                raise SpectraDispatchReceiptError("Spectra dispatch receipt account scope does not match")
-            if not isinstance(config, dict):
-                raise SpectraDispatchReceiptError("Executor configuration is not an object")
-            if str(config.get("connector_name") or "").strip().lower() != payload.get("connector_name"):
-                raise SpectraDispatchReceiptError("Spectra dispatch receipt connector scope does not match")
-            if config.get("trading_pair") != payload.get("trading_pair"):
-                raise SpectraDispatchReceiptError("Spectra dispatch receipt market scope does not match")
+        if body.get("account_name") != payload.get("account_name"):
+            raise SpectraDispatchReceiptError("Spectra dispatch receipt account scope does not match")
+        if not isinstance(config, dict):
+            raise SpectraDispatchReceiptError("Executor configuration is not an object")
+        if str(config.get("connector_name") or "").strip().lower() != payload.get("connector_name"):
+            raise SpectraDispatchReceiptError("Spectra dispatch receipt connector scope does not match")
+        if config.get("trading_pair") != payload.get("trading_pair"):
+            raise SpectraDispatchReceiptError("Spectra dispatch receipt market scope does not match")
+    elif operation == "stop_executor":
+        match = re.fullmatch(r"/executors/([^/]+)/stop", expected_path)
+        if expected_method != "POST" or match is None:
+            raise SpectraDispatchReceiptError("Executor stop receipt has an invalid HTTP scope")
+        executor_id = match.group(1)
+        if payload.get("executor_id") != executor_id:
+            raise SpectraDispatchReceiptError("Executor stop receipt identity does not match path")
+        if not isinstance(body, dict) or not isinstance(body.get("keep_position"), bool):
+            raise SpectraDispatchReceiptError("Executor stop receipt requires an exact keep_position body")
+        expected_config_hash = canonical_body_sha256({"executor_id": executor_id})
+        if payload.get("config_sha256") != expected_config_hash:
+            raise SpectraDispatchReceiptError("Executor stop receipt identity digest does not match")
+    else:
+        raise SpectraDispatchReceiptError("Spectra dispatch receipt operation is unsupported")
 
     required = (
         "receipt_id",
