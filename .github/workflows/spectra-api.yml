@@ -47,6 +47,7 @@ jobs:
             services/executor_service.py \
             utils/spectra_paper_guard.py \
             services/unified_connector_service.py \
+            services/market_data_service.py \
             services/executor_service.py \
             routers/connectors.py \
             routers/portfolio.py \
@@ -178,7 +179,35 @@ jobs:
           assert rules["BTC-USD"]["supports_limit_orders"] is True, rules
           print("Verified: Kraken paper connector resolves live public market rules through its keyless base connector.")
           PY
-          grep -q '^SPECTRA_PAPER_ONLY=true$' .env
+          curl -fsS -u "$API_AUTH" -H "Content-Type: application/json" \
+            -d '{"connector_name":"kraken_paper_trade","trading_pair":"BTC-USD","account_name":"master_account","timeout":30}' \
+            http://127.0.0.1:8000/market-data/trading-pair/add \
+            > "$RUNNER_TEMP/kraken-paper-pair.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          result = json.loads(Path(os.environ["RUNNER_TEMP"] + "/kraken-paper-pair.json").read_text())
+          assert result["success"] is True, result
+          PY
+          curl -fsS -u "$API_AUTH" -H "Content-Type: application/json" \
+            -d '{"connector_name":"kraken_paper_trade","trading_pair":"BTC-USD","depth":5}' \
+            http://127.0.0.1:8000/market-data/order-book \
+            > "$RUNNER_TEMP/kraken-paper-book.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          book = json.loads(Path(os.environ["RUNNER_TEMP"] + "/kraken-paper-book.json").read_text())
+          assert book["trading_pair"] == "BTC-USD", book
+          assert book["bids"] and book["asks"], book
+          print("Verified: Kraken paper adapter exposes a live public order book for executor pricing.")
+          PY
+          grep -q '^SPECTRA_PAPER_ONLY=true          grep -q '^SPECTRA_ALLOW_LIVE_EXECUTION=false$' .env
+      - name: Stop paper-only API stack
+        if: always()
+        run: docker compose -p spectra-ci -f docker-compose.alpha-ci.yml down -v || true
+ .env
           grep -q '^SPECTRA_ALLOW_LIVE_EXECUTION=false$' .env
       - name: Stop paper-only API stack
         if: always()
