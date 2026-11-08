@@ -436,6 +436,29 @@ class UnifiedConnectorService:
             )
             return False
 
+        # PaperTradeExchange shares its tracker with the keyless data connector.
+        # Start that base connector so its exchange symbol map, REST snapshot and
+        # WebSocket subscription are initialized through the supported lifecycle.
+        if connector_name.endswith("_paper_trade"):
+            data_connector = self.get_data_connector(connector_name)
+            if not self._data_connectors_started.get(connector_name, False):
+                success = await self.ensure_data_connector_started(
+                    connector_name, trading_pair
+                )
+                if not success:
+                    return False
+            elif trading_pair not in data_connector.order_book_tracker.order_books:
+                success = await data_connector.add_trading_pair(trading_pair)
+                if not success:
+                    return False
+            if not await self._wait_for_order_book(
+                data_connector.order_book_tracker, trading_pair, timeout
+            ):
+                return False
+            return self._ensure_paper_trade_market_ready(
+                connector_name, connector
+            )
+
         # For data connectors, ensure network is started
         if connector_name in self._data_connectors:
             if not self._data_connectors_started.get(connector_name, False):
@@ -809,9 +832,22 @@ class UnifiedConnectorService:
                     f"Base exchange connector {base_connector_name} is not installed"
                 )
 
-            from hummingbot.connector.exchange.paper_trade import create_paper_trade_market
+            from hummingbot.connector.exchange.paper_trade.paper_trade_exchange import (
+                PaperTradeExchange,
+            )
 
-            connector = create_paper_trade_market(base_connector_name, [])
+            # Share the exact keyless public-data connector's tracker with the
+            # PaperTradeExchange wrapper. Hummingbot's factory creates a second
+            # tracker from a throwaway non-trading connector; that tracker has no
+            # managed network lifecycle here and never receives a usable snapshot.
+            # The shared tracker is still public-data-only, while all simulated
+            # orders and balances remain inside PaperTradeExchange.
+            data_connector = self.get_data_connector(connector_name)
+            connector = PaperTradeExchange(
+                data_connector.order_book_tracker,
+                get_connector_class(base_connector_name),
+                exchange_name=base_connector_name,
+            )
 
             # Match Hummingbot's native ConnectorManager behavior: simulated
             # balances come from the account's conf_client.yml paper_trade section.
