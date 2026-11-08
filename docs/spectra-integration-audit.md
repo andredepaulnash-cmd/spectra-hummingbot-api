@@ -202,3 +202,38 @@ A cross-repository source check found a concrete standalone Hummingbot MCP launc
 This configuration may be intended for local developer use; it is not proof that production currently launches this way. It is nevertheless a real alternate path that must be accounted for in acceptance. It must never receive Spectra production API credentials or be treated as a governed Spectra agent seat. Production launch should be restricted to the supervised Condor spawner, which passes the host-generated agent identity, explicit profile and mutes. Remove or clearly segregate the static full-profile entry from any production runtime configuration, and add a startup test that refuses Spectra credentials when the process has no host-generated Spectra identity or explicit restricted profile.
 
 The new Core documentation-only integration map records this and the PR #31/#40 shared-file port plan: [PR #43 — recovery-safety integration map](https://github.com/andredepaulnash-cmd/spectra-finance-core/pull/43). It is a draft and does not merge or change runtime code.
+
+
+### Complete execution-capable REST route inventory — follow-up source pass
+
+The following route families were enumerated from API main. main.py attaches HTTP Basic authentication to each listed router; that proves API identity only, not a Spectra governor authorization. This inventory distinguishes external mutations from operational/configuration writes.
+
+| Route | Effect / dispatch | Spectra governor evidence in inspected handler |
+|---|---|---|
+| POST /executors/ | Creates, starts and persists a Hummingbot executor | None; direct call to ExecutorService.create_executor |
+| POST /executors/{executor_id}/stop | Stops an executor; keep_position controls whether exposure may be closed | None in route; requires a governed stop/exit policy |
+| POST /trading/orders | Direct connector buy/sell | None; calls AccountsService.place_trade |
+| POST /trading/{account}/{connector}/orders/{client_order_id}/cancel | Direct connector order cancellation | None; calls account service cancellation |
+| POST /trading/{account}/{connector}/leverage | Changes perpetual leverage | None in inspected route/service path |
+| POST /trading/{account}/{connector}/position-mode | Changes perpetual position mode | None in inspected route/service path |
+| POST /gateway/swap/execute | Executes a wallet swap | Gateway-online check only; calls GatewayClient.execute_swap |
+| POST /gateway/swap/execute-quote | Executes a previously quoted wallet swap | Gateway-online check only; calls GatewayClient.execute_quote |
+| POST /gateway/clmm/open, /add, /remove, /close, /collect-fees | Opens, funds, reduces, closes CLMM positions or collects fees | Gateway-online check only on these write routes; no Core receipt in inspected handlers |
+| POST /gateway/clmm/create-pool | Creates a CLMM pool | Gateway-online check; no Core receipt in inspected handler |
+| POST /gateway/amm/add-liquidity, /remove-liquidity | Adds/removes AMM liquidity | Gateway-online check; no Core receipt in inspected handlers |
+| POST /gateway/amm/create-pool | Creates and seeds an AMM pool | Gateway-online check; no Core receipt in inspected handler |
+| POST /bot-orchestration/start-bot | Sends MQTT start command with caller-supplied script/config | None in inspected handler |
+| POST /bot-orchestration/deploy-v2-controllers, /deploy-v2-script | Creates and starts a Hummingbot container | None; calls Docker service |
+| POST /docker/start-container/{container_name} | Starts any named stopped container visible to the Docker service | No Spectra identity/managed-container receipt check in inspected handler |
+| POST /docker/pull-image/ | Pulls an image through Docker service | Administrative supply-chain mutation; must not be agent-accessible |
+| POST /gateway/start, /stop, /restart | Starts/stops/restarts Gateway | Operational control; not a trading-governor check |
+| POST /accounts/gateway/wallet/set-default | Changes which wallet is selected by default for a chain | Gateway-online check only; no Core receipt in inspected handler |
+| POST /accounts/add-credential/{account}/{connector}, /delete-credential/{account}/{connector} | Adds/removes exchange connector credentials | Administrative secret mutation; keep outside agent surface |
+
+Other write routes update controller/script source and configuration, connector/API-key/network/token/pool settings, account records, or Docker/container state. These may not submit a trade immediately, but can change what code, credentials, wallet, network, image, or strategy is used by a later start. They must be separated from the Spectra agent's least-privilege runtime and protected as administrative operations.
+
+The following routes are read/quote/history surfaces rather than dispatches in the inspected handlers: /gateway/swap/quote, /gateway/clmm/quote-position, /gateway/amm/quote-liquidity, and position/order/trade search and history endpoints. They can remain candidates for a read-only tool profile, subject to normal data-access controls. Quote creation must not be confused with quote execution.
+
+**Implementation consequence:** do not patch only /executors/ or only the MCP wrapper. First define a deployment mode in which the API's execution boundary is explicit. Every external mutation must either (a) verify a Core-issued, one-time, scope-bound dispatch receipt immediately before dispatch, or (b) be disabled for the Spectra runtime. The receipt verifier must cover executor start/stop, direct CEX orders/cancel, leverage and position mode, Gateway swaps/liquidity, bot start/deploy, Docker container start and wallet selection. Administrative writes (credentials, arbitrary controller/script edits, image pulls, Gateway/API-key/network configuration and Docker management) should be unavailable to the Spectra agent entirely and exposed only through a separate operator/admin channel.
+
+No source files implementing runtime behavior were changed by this follow-up. This route inventory is based on GitHub source inspection of API main; no running API endpoint, Docker daemon, Gateway, wallet, exchange account, MQTT broker or container was contacted.
