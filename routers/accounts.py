@@ -6,6 +6,7 @@ from starlette import status
 from deps import get_accounts_service, require_gateway_online
 from models import GatewayWalletCredential, SetDefaultWalletRequest
 from services.accounts_service import AccountsService, validate_safe_name
+from utils.spectra_paper_guard import validate_paper_connector_configuration
 
 router = APIRouter(tags=["Accounts"], prefix="/accounts")
 
