@@ -149,9 +149,21 @@ def verify_and_consume_receipt(
     if payload.get("body_sha256") != actual_body_hash:
         raise SpectraDispatchReceiptError("Spectra dispatch receipt body digest does not match")
     if isinstance(body, dict) and "executor_config" in body:
-        config_hash = canonical_body_sha256(body["executor_config"])
+        config = body["executor_config"]
+        config_hash = canonical_body_sha256(config)
         if payload.get("config_sha256") != config_hash:
             raise SpectraDispatchReceiptError("Spectra dispatch receipt executor config digest does not match")
+        if normalize_path(path) == "/executors":
+            if payload.get("operation") != "create_executor":
+                raise SpectraDispatchReceiptError("Spectra dispatch receipt operation does not match executor creation")
+            if body.get("account_name") != payload.get("account_name"):
+                raise SpectraDispatchReceiptError("Spectra dispatch receipt account scope does not match")
+            if not isinstance(config, dict):
+                raise SpectraDispatchReceiptError("Executor configuration is not an object")
+            if config.get("connector_name") != payload.get("connector_name"):
+                raise SpectraDispatchReceiptError("Spectra dispatch receipt connector scope does not match")
+            if config.get("trading_pair") != payload.get("trading_pair"):
+                raise SpectraDispatchReceiptError("Spectra dispatch receipt market scope does not match")
 
     required = (
         "receipt_id",
