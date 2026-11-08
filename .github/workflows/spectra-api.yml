@@ -153,5 +153,5 @@ jobs:
           grep -q '^SPECTRA_PAPER_ONLY=true$' .env
           grep -q '^SPECTRA_ALLOW_LIVE_EXECUTION=false$' .env
       - name: Stop paper-only API stack
+        if: always()
         run: docker compose -p spectra-ci -f docker-compose.alpha-ci.yml down -v || true
-          grep -q '^SPECTRA_ALLOW_LIVE_EXECUTION=false
