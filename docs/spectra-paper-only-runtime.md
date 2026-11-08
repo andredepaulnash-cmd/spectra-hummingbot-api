@@ -8,7 +8,7 @@
 
 - Allows only a reviewed set of paper order, executor, account-read, portfolio, and market-data POST routes. Gateway, wallet, credential-management, bot orchestration, script, Docker, and every unreviewed mutation route remain blocked.
 - Uses exact route patterns. A new POST endpoint is blocked by default until reviewed.
-- Initializes only connector names ending in `_paper_trade`; the connector service independently rejects live CEX, perpetual, and Gateway connector names, including lazy connector creation.
+- Initializes only connector names ending in `_paper_trade`; the API reads the explicit comma-separated `SPECTRA_PAPER_CONNECTORS` list at startup and creates those keyless paper connectors without exchange credential files. The connector service independently rejects live CEX, perpetual, and Gateway connector names, including lazy connector creation.
 - Starts the Hummingbot executor control loop and account service only against those paper connectors, so simulated orders can be created and managed without starting live connectors.
 - Does not construct the Docker-backed bot/MQTT orchestrator, Docker service, or Gateway service; it also does not start Gateway monitoring, Docker actions, or market-data background feeds. These Docker-backed services are not instantiated in paper mode, so the API container does not need the host Docker/Podman socket. Read-only requests to disabled Docker/Gateway service routes return HTTP 503. Paper connectors own their public market feed.
 - Does not run orphaned-executor cleanup in paper mode, preserving historical live rows rather than rewriting them.
@@ -18,7 +18,7 @@ The authenticated `GET /spectra/runtime` endpoint reports the effective mode, wh
 
 ## Enablement
 
-Set the following in the API process environment before startup:
+Set the following in the API process environment before startup. For the Kraken alpha, the installer also sets `SPECTRA_PAPER_CONNECTORS=kraken_paper_trade`:
 
 ```dotenv
 SPECTRA_PAPER_ONLY=true
