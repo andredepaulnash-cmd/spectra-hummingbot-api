@@ -120,8 +120,8 @@ jobs:
       - name: Start paper-only API without host container socket
         shell: bash
         run: |
-          sed \\
-            -e '\\|/var/run/docker.sock:/var/run/docker.sock|d' \
+          sed \
+            -e '\|/var/run/docker.sock:/var/run/docker.sock|d' \
             -e '/extra_hosts:/d' \
             -e '/host.docker.internal:host-gateway/d' \
             -e 's/container_name: hummingbot-api/container_name: spectra-ci-hummingbot-api/' \
@@ -150,16 +150,8 @@ jobs:
           assert runtime["live_dispatch_available"] is False, runtime
           print("Spectra API runtime reports PAPER_ONLY; live dispatch is unavailable.")
           PY
-          grep -q '^SPECTRA_PAPER_ONLY=true
+          grep -q '^SPECTRA_PAPER_ONLY=true$' .env
+          grep -q '^SPECTRA_ALLOW_LIVE_EXECUTION=false$' .env
       - name: Stop paper-only API stack
-        if: always()
         run: docker compose -p spectra-ci -f docker-compose.alpha-ci.yml down -v || true
- .env
           grep -q '^SPECTRA_ALLOW_LIVE_EXECUTION=false
-      - name: Stop paper-only API stack
-        if: always()
-        run: docker compose -p spectra-ci -f docker-compose.alpha-ci.yml down -v || true
- .env
-      - name: Stop paper-only API stack
-        if: always()
-        run: docker compose -p spectra-ci -f docker-compose.alpha-ci.yml down -v || true
