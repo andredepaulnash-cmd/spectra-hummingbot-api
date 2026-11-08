@@ -10,7 +10,7 @@
 - Uses exact route patterns. A new POST endpoint is blocked by default until reviewed.
 - Initializes only connector names ending in `_paper_trade`; the connector service independently rejects live CEX, perpetual, and Gateway connector names, including lazy connector creation.
 - Starts the Hummingbot executor control loop and account service only against those paper connectors, so simulated orders can be created and managed without starting live connectors.
-- Does not construct or start the Docker-backed bot/MQTT orchestrator, Gateway monitoring, Docker actions, or market-data background feeds. The Docker-backed orchestrator is not instantiated at all in paper mode, so the API container does not need the host Docker/Podman socket. Paper connectors own their public market feed.
+- Does not construct the Docker-backed bot/MQTT orchestrator, Docker service, or Gateway service; it also does not start Gateway monitoring, Docker actions, or market-data background feeds. These Docker-backed services are not instantiated in paper mode, so the API container does not need the host Docker/Podman socket. Read-only requests to disabled Docker/Gateway service routes return HTTP 503. Paper connectors own their public market feed.
 - Does not run orphaned-executor cleanup in paper mode, preserving historical live rows rather than rewriting them.
 - Filters legacy live executors and position holds out of paper-mode recovery and executor listings.
 
