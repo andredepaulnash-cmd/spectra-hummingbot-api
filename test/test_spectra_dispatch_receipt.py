@@ -174,10 +174,13 @@ def test_invalid_signature_is_rejected(monkeypatch, tmp_path):
 
 
 def test_missing_public_key_fails_closed(monkeypatch, tmp_path):
+    private = _keypair(monkeypatch)
+    body = _body()
+    token = _token(private, body)
     monkeypatch.delenv("SPECTRA_DISPATCH_PUBLIC_KEY", raising=False)
     with pytest.raises(receipts.SpectraDispatchReceiptError, match="not configured"):
         receipts.verify_and_consume_receipt(
-            "x.y", method="POST", path="/executors", body=_body(),
+            token, method="POST", path="/executors", body=body,
             now=1001, db_path=tmp_path / "receipts.sqlite3",
         )
 
