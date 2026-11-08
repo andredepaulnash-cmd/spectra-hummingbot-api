@@ -1,7 +1,7 @@
 services:
   hummingbot-api:
     container_name: hummingbot-api
-    image: spectra-finance/hummingbot-api:local
+    image: localhost/spectra-finance/hummingbot-api:local
     build:
       context: .
       dockerfile: Dockerfile
