@@ -63,12 +63,10 @@ def require_core_surface() -> None:
             missing.append(f"  - {path}.{attribute} — {purpose}")
 
     if missing:
-        import hummingbot
-
         raise RuntimeError(
             "The installed hummingbot core is older than this API requires. Missing:\n"
             + "\n".join(missing)
-            + f"\n\nInstalled hummingbot: {getattr(hummingbot, '__version__', 'unknown')}. "
+            + f"\n\nInstalled hummingbot: {installed_version}. "
             "Install a core that carries these fields (see environment.yml) and rebuild. "
             "Starting anyway would record every executor's pnl, fees and volume as zero."
         )
