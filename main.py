@@ -14,12 +14,14 @@ from hummingbot.client.config import config_helpers
 # Load environment variables early
 load_dotenv()
 
-from utils.spectra_paper_guard import should_block_paper_mutation  # noqa: E402
+from utils.spectra_paper_guard import (  # noqa: E402
+    paper_only_enabled,
+    should_block_paper_mutation,
+)
 
-_paper_only_value = os.getenv("SPECTRA_PAPER_ONLY", "false").strip().lower()
-if _paper_only_value not in {"1", "true", "yes", "0", "false", "no"}:
-    raise RuntimeError("SPECTRA_PAPER_ONLY must be an explicit boolean")
-SPECTRA_PAPER_ONLY = _paper_only_value in {"1", "true", "yes"}
+# Use the same fail-closed policy as connector creation. Missing configuration
+# means paper-only; leaving paper mode requires the separate live authorization.
+SPECTRA_PAPER_ONLY = paper_only_enabled()
 
 VERSION = "1.0.1"
 
