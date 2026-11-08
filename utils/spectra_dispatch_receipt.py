@@ -276,18 +276,6 @@ class SpectraDispatchReceiptMiddleware:
             await self.app(scope, receive, send)
             return
 
-        messages = []
-        body_parts = []
-        while True:
-            message = await receive()
-            messages.append(message)
-            if message["type"] == "http.request":
-                body_parts.append(message.get("body", b""))
-                if not message.get("more_body", False):
-                    break
-            elif message["type"] == "http.disconnect":
-                break
-        body_bytes = b"".join(body_parts)
         headers = {k.lower(): v for k, v in scope.get("headers", [])}
         authorization = headers.get(b"authorization", b"")
         try:
@@ -318,6 +306,36 @@ class SpectraDispatchReceiptMiddleware:
             await send({"type": "http.response.body", "body": response_body})
             return
         token = headers.get(b"x-spectra-dispatch-receipt", b"").decode("ascii", "ignore")
+
+        messages = []
+        body_parts = []
+        body_size = 0
+        while True:
+            message = await receive()
+            messages.append(message)
+            if message["type"] == "http.request":
+                part = message.get("body", b"")
+                body_size += len(part)
+                if body_size > 1_048_576:
+                    response_body = b'{"detail":"Spectra execution request body exceeds 1 MiB"}'
+                    await send(
+                        {
+                            "type": "http.response.start",
+                            "status": 413,
+                            "headers": [
+                                (b"content-type", b"application/json"),
+                                (b"content-length", str(len(response_body)).encode("ascii")),
+                            ],
+                        }
+                    )
+                    await send({"type": "http.response.body", "body": response_body})
+                    return
+                body_parts.append(part)
+                if not message.get("more_body", False):
+                    break
+            elif message["type"] == "http.disconnect":
+                break
+        body_bytes = b"".join(body_parts)
         try:
             body = json.loads(body_bytes) if body_bytes else {}
             payload = verify_and_consume_receipt(
