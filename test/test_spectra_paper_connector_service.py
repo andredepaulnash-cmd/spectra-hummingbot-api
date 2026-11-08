@@ -193,3 +193,57 @@ async def test_native_paper_adapter_skips_exchange_py_base_startup_lifecycle(mon
 
     assert initialized is connector
     service._start_connector_network.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_paper_trading_rules_use_keyless_base_exchange_data_connector():
+    from types import SimpleNamespace
+    from services.market_data_service import MarketDataService
+
+    class FakeDataConnector:
+        trading_rules = {}
+
+        async def _update_trading_rules(self):
+            self.trading_rules = {
+                "BTC-USD": SimpleNamespace(
+                    min_order_size=0.00001,
+                    max_order_size=None,
+                    min_price_increment=0.01,
+                    min_base_amount_increment=0.00001,
+                    min_quote_amount_increment=0.01,
+                    min_notional_size=1,
+                    min_order_value=0,
+                    max_price_significant_digits=8,
+                    supports_limit_orders=True,
+                    supports_market_orders=True,
+                    buy_order_collateral_token="USD",
+                    sell_order_collateral_token="BTC",
+                )
+            }
+
+    class FakeConnectorService:
+        def __init__(self):
+            self.data_connector = FakeDataConnector()
+            self.data_calls = []
+            self.best_calls = []
+
+        def get_data_connector(self, connector_name):
+            self.data_calls.append(connector_name)
+            return self.data_connector
+
+        def get_best_connector_for_market(self, connector_name, account_name=None):
+            self.best_calls.append((connector_name, account_name))
+            raise AssertionError("paper rules must not query PaperTradeExchange")
+
+    service = MarketDataService.__new__(MarketDataService)
+    service._connector_service = FakeConnectorService()
+
+    rules = await service.get_trading_rules(
+        "kraken_paper_trade",
+        ["BTC-USD"],
+    )
+
+    assert rules["BTC-USD"]["min_order_size"] == 0.00001
+    assert rules["BTC-USD"]["min_notional_size"] == 1
+    assert service._connector_service.data_calls == ["kraken_paper_trade"]
+    assert service._connector_service.best_calls == []
