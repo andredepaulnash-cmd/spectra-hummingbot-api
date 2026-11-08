@@ -830,11 +830,22 @@ class UnifiedConnectorService:
                 f"Connector {base_connector_name} not found"
             )
 
-        # Get config keys but don't use real API keys
+        # Paper data connectors are strictly public-market-data adapters.
+        # Never load saved exchange credentials into the paper-only runtime.
         connector_config = AllConnectorSettings.get_connector_config_keys(
             base_connector_name
         )
-        if getattr(connector_config, "use_auth_for_public_endpoints", False):
+        if connector_name.endswith("_paper_trade"):
+            api_keys = (
+                {
+                    key: ""
+                    for key in connector_config.__class__.model_fields.keys()
+                    if key != "connector"
+                }
+                if connector_config is not None
+                else {}
+            )
+        elif getattr(connector_config, "use_auth_for_public_endpoints", False):
             api_keys = api_keys_from_connector_config_map(
                 ClientConfigAdapter(connector_config)
             )
