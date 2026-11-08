@@ -11,14 +11,12 @@ from types import SimpleNamespace
 
 import pytest
 
-pytest.importorskip("hummingbot")
-
-from utils.core_compatibility import REQUIRED_CORE_SURFACE, require_core_surface  # noqa: E402
+from utils import core_compatibility
 
 
-def test_the_installed_core_carries_everything_this_api_reads():
-    """Guards the real dependency: fails if the environment resolves an old core."""
-    require_core_surface()
+def test_the_pinned_core_version_is_accepted(monkeypatch):
+    monkeypatch.setattr(core_compatibility, "version", lambda name: "20260922")
+    core_compatibility.require_core_surface()
 
 
 def test_the_list_is_empty_because_nothing_extra_is_required_right_now():
@@ -30,13 +28,14 @@ def test_the_list_is_empty_because_nothing_extra_is_required_right_now():
     to require. An empty list is the honest state, and require_core_surface() passing
     trivially is the point: no patched core needed to boot.
     """
-    assert list(REQUIRED_CORE_SURFACE) == []
+    assert list(core_compatibility.REQUIRED_CORE_SURFACE) == []
 
 
 def test_a_missing_field_is_a_startup_error_naming_it(monkeypatch):
     """The whole point: loud, and specific enough to act on."""
+    monkeypatch.setattr(core_compatibility, "version", lambda name: "20260922")
     monkeypatch.setattr(
-        "utils.core_compatibility.REQUIRED_CORE_SURFACE",
+        core_compatibility, "REQUIRED_CORE_SURFACE",
         [("hummingbot.strategy_v2.models.executors_info:ExecutorInfo", "not_a_field", "a field from the future")],
     )
 
@@ -72,3 +71,19 @@ def test_a_plain_class_is_checked_by_attribute_not_model_fields(monkeypatch):
     )
 
     require_core_surface()
+
+
+@pytest.mark.parametrize("installed", ["20260920", "20260922.post1", "2.17.0"])
+def test_unreviewed_core_version_fails_startup(monkeypatch, installed):
+    monkeypatch.setattr(core_compatibility, "version", lambda name: installed)
+    with pytest.raises(RuntimeError, match="Unsupported Hummingbot core version"):
+        core_compatibility.require_core_surface()
+
+
+def test_missing_core_package_fails_startup(monkeypatch):
+    def missing(_name):
+        raise core_compatibility.PackageNotFoundError("hummingbot")
+
+    monkeypatch.setattr(core_compatibility, "version", missing)
+    with pytest.raises(RuntimeError, match="is not installed"):
+        core_compatibility.require_core_surface()
