@@ -40,7 +40,7 @@ def test_a_missing_field_is_a_startup_error_naming_it(monkeypatch):
     )
 
     with pytest.raises(RuntimeError) as excinfo:
-        require_core_surface()
+        core_compatibility.require_core_surface()
 
     message = str(excinfo.value)
     assert "not_a_field" in message
@@ -48,19 +48,21 @@ def test_a_missing_field_is_a_startup_error_naming_it(monkeypatch):
 
 
 def test_an_unimportable_target_is_reported_rather_than_raised_raw(monkeypatch):
+    monkeypatch.setattr(core_compatibility, "version", lambda name: "20260922")
     monkeypatch.setattr(
-        "utils.core_compatibility.REQUIRED_CORE_SURFACE",
+        core_compatibility, "REQUIRED_CORE_SURFACE",
         [("hummingbot.strategy_v2.models.nope:Gone", "anything", "a module that is not there")],
     )
 
     with pytest.raises(RuntimeError) as excinfo:
-        require_core_surface()
+        core_compatibility.require_core_surface()
 
     assert "could not be imported" in str(excinfo.value)
 
 
 def test_a_plain_class_is_checked_by_attribute_not_model_fields(monkeypatch):
     """ExecutorBase is not a pydantic model, so `model_fields` must not be assumed."""
+    monkeypatch.setattr(core_compatibility, "version", lambda name: "20260922")
     monkeypatch.setattr(
         "utils.core_compatibility._resolve",
         lambda path: SimpleNamespace(volume_traded_quote=property(lambda self: None)),
@@ -70,7 +72,7 @@ def test_a_plain_class_is_checked_by_attribute_not_model_fields(monkeypatch):
         [("anything:AtAll", "volume_traded_quote", "present as an attribute")],
     )
 
-    require_core_surface()
+    core_compatibility.require_core_surface()
 
 
 @pytest.mark.parametrize("installed", ["20260920", "20260922.post1", "2.17.0"])
