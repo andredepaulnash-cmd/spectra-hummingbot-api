@@ -190,6 +190,9 @@ def test_missing_public_key_fails_closed(monkeypatch, tmp_path):
     [
         ("POST", "/executors/", True),
         ("POST", "/executors/search", False),
+        ("POST", "/trading/positions", False),
+        ("POST", "/trading/orders/active", False),
+        ("POST", "/trading/trades", False),
         ("DELETE", "/trading/orders/123", True),
         ("POST", "/gateway/swap", True),
         ("POST", "/bots/start", True),
