@@ -178,7 +178,8 @@ jobs:
           assert rules["BTC-USD"]["supports_limit_orders"] is True, rules
           print("Verified: Kraken paper connector resolves live public market rules through its keyless base connector.")
           PY
-          grep -q '^SPECTRA_PAPER_ONLY=true          grep -q '^SPECTRA_ALLOW_LIVE_EXECUTION=false$' .env
+          grep -q '^SPECTRA_PAPER_ONLY=true$' .env
+          grep -q '^SPECTRA_ALLOW_LIVE_EXECUTION=false$' .env
       - name: Stop paper-only API stack
         if: always()
         run: docker compose -p spectra-ci -f docker-compose.alpha-ci.yml down -v || true
