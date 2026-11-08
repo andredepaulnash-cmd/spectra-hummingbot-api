@@ -87,6 +87,7 @@ from services.unified_connector_service import UnifiedConnectorService  # noqa: 
 from services.websocket_manager import WebSocketManager  # noqa: E402
 from utils.bot_archiver import BotArchiver  # noqa: E402
 from utils.core_compatibility import require_core_surface  # noqa: E402
+from utils.spectra_dispatch_receipt import SpectraDispatchReceiptMiddleware  # noqa: E402
 from utils.security import BackendAPISecurity  # noqa: E402
 
 # Set up logging configuration
@@ -431,6 +432,9 @@ app.add_middleware(
 # Compress responses for clients that send Accept-Encoding: gzip. These payloads are highly
 # repetitive JSON and compress ~14x; small responses are left alone via minimum_size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+# Execution/deployment writes require a short-lived, exact-scope receipt signed by Core.
+# Missing public-key configuration fails closed at the protected route boundary.
+app.add_middleware(SpectraDispatchReceiptMiddleware)
 
 
 @app.middleware("http")
