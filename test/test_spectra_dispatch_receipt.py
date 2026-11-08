@@ -23,7 +23,10 @@ def _keypair(monkeypatch):
     return private
 
 
-def _token(private, body, *, now=1000, path="/executors", method="POST"):
+def _token(
+    private, body, *, now=1000, path="/executors", method="POST",
+    connector_name="kraken_paper_trade", trading_pair="XRP-USD",
+):
     config_hash = receipts.canonical_body_sha256(body["executor_config"])
     payload = {
         "version": 1,
@@ -31,8 +34,8 @@ def _token(private, body, *, now=1000, path="/executors", method="POST"):
         "proposal_id": "proposal-123",
         "intent": "ENTRY",
         "account_name": "paper-account",
-        "connector_name": "kraken_paper_trade",
-        "trading_pair": "XRP-USD",
+        "connector_name": connector_name,
+        "trading_pair": trading_pair,
         "operation": "create_executor",
         "amount": "20",
         "config_sha256": config_hash,
@@ -112,6 +115,17 @@ def test_wrong_method_or_path_is_rejected(monkeypatch, tmp_path):
     with pytest.raises(receipts.SpectraDispatchReceiptError, match="HTTP scope"):
         receipts.verify_and_consume_receipt(
             token, method="POST", path="/trading/orders", body=body,
+            now=1001, db_path=tmp_path / "receipts.sqlite3",
+        )
+
+
+def test_signed_scope_metadata_must_match_request_body(monkeypatch, tmp_path):
+    private = _keypair(monkeypatch)
+    body = _body()
+    token = _token(private, body, connector_name="kraken")
+    with pytest.raises(receipts.SpectraDispatchReceiptError, match="connector scope"):
+        receipts.verify_and_consume_receipt(
+            token, method="POST", path="/executors", body=body,
             now=1001, db_path=tmp_path / "receipts.sqlite3",
         )
 
