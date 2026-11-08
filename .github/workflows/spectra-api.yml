@@ -165,7 +165,24 @@ jobs:
           assert runtime["live_dispatch_available"] is False, runtime
           print("Verified: Kraken paper connector initialized; live dispatch is unavailable.")
           PY
-          grep -q '^SPECTRA_PAPER_ONLY=true$' .env
+          curl -fsS -u "$API_AUTH" \
+            "http://127.0.0.1:8000/connectors/kraken_paper_trade/trading-rules?trading_pairs=BTC-USD" \
+            > "$RUNNER_TEMP/kraken-paper-rules.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          rules = json.loads(Path(os.environ["RUNNER_TEMP"] + "/kraken-paper-rules.json").read_text())
+          assert "BTC-USD" in rules, rules
+          assert rules["BTC-USD"]["min_order_size"] > 0, rules
+          assert rules["BTC-USD"]["supports_limit_orders"] is True, rules
+          print("Verified: Kraken paper connector resolves live public market rules through its keyless base connector.")
+          PY
+          grep -q '^SPECTRA_PAPER_ONLY=true          grep -q '^SPECTRA_ALLOW_LIVE_EXECUTION=false$' .env
+      - name: Stop paper-only API stack
+        if: always()
+        run: docker compose -p spectra-ci -f docker-compose.alpha-ci.yml down -v || true
+ .env
           grep -q '^SPECTRA_ALLOW_LIVE_EXECUTION=false$' .env
       - name: Stop paper-only API stack
         if: always()
