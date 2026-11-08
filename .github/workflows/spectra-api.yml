@@ -147,6 +147,8 @@ jobs:
           assert runtime["mode"] == "PAPER_ONLY", runtime
           assert runtime["paper_only"] is True, runtime
           assert runtime["paper_connectors_only"] is True, runtime
+          assert runtime["paper_connector_count"] >= 1, runtime
+          assert any(name.endswith("/kraken_paper_trade") for name in runtime["paper_connectors"]), runtime
           assert runtime["live_dispatch_available"] is False, runtime
           print("Spectra API runtime reports PAPER_ONLY; live dispatch is unavailable.")
           PY
