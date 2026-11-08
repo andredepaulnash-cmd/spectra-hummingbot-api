@@ -26,6 +26,7 @@ def _keypair(monkeypatch):
 def _token(
     private, body, *, now=1000, path="/executors", method="POST",
     connector_name="kraken_paper_trade", trading_pair="XRP-USD",
+    policy_version="spectra-policy-v1", amount="20",
 ):
     config_hash = receipts.canonical_body_sha256(body["executor_config"])
     payload = {
@@ -37,14 +38,14 @@ def _token(
         "connector_name": connector_name,
         "trading_pair": trading_pair,
         "operation": "create_executor",
-        "amount": "20",
+        "amount": amount,
         "config_sha256": config_hash,
         "body_sha256": receipts.canonical_body_sha256(body),
         "method": method,
         "path": path,
         "issued_at": now,
         "expires_at": now + 30,
-        "policy_version": "spectra-policy-v1",
+        "policy_version": policy_version,
     }
     payload_bytes = receipts.canonical_json(payload)
     signature = private.sign(payload_bytes)
@@ -127,6 +128,24 @@ def test_signed_scope_metadata_must_match_request_body(monkeypatch, tmp_path):
         receipts.verify_and_consume_receipt(
             token, method="POST", path="/executors", body=body,
             now=1001, db_path=tmp_path / "receipts.sqlite3",
+        )
+
+
+def test_unaccepted_policy_version_and_nonpositive_amount_are_rejected(monkeypatch, tmp_path):
+    private = _keypair(monkeypatch)
+    body = _body()
+    wrong_policy = _token(private, body, policy_version="spectra-policy-v2")
+    with pytest.raises(receipts.SpectraDispatchReceiptError, match="policy version"):
+        receipts.verify_and_consume_receipt(
+            wrong_policy, method="POST", path="/executors", body=body,
+            now=1001, db_path=tmp_path / "policy.sqlite3",
+        )
+
+    zero_amount = _token(private, body, amount="0")
+    with pytest.raises(receipts.SpectraDispatchReceiptError, match="positive"):
+        receipts.verify_and_consume_receipt(
+            zero_amount, method="POST", path="/executors", body=body,
+            now=1001, db_path=tmp_path / "amount.sqlite3",
         )
 
 
