@@ -74,6 +74,7 @@ def protected_mutation(method: str, path: str) -> bool:
         "/trading",
         "/gateway",
         "/bots",
+        "/bot-orchestration",
         "/docker",
         "/controllers",
         "/scripts",
