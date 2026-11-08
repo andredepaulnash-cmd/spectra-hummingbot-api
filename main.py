@@ -295,8 +295,12 @@ async def lifespan(app: FastAPI):
         logging.info("SPECTRA_PAPER_ONLY=true: BotsOrchestrator not constructed")
 
     backtesting_service = BacktestingService()
-    docker_service = DockerService()
-    gateway_service = GatewayService()
+    # Neither service is constructed in paper mode: both wrap host Docker access.
+    # The alpha Compose file intentionally has no Docker socket mount.
+    docker_service = None if SPECTRA_PAPER_ONLY else DockerService()
+    gateway_service = None if SPECTRA_PAPER_ONLY else GatewayService()
+    if SPECTRA_PAPER_ONLY:
+        logging.info("SPECTRA_PAPER_ONLY=true: Docker and Gateway services not constructed")
     if not SPECTRA_PAPER_ONLY:
         # If a secured Gateway is already running but this API lost the shared mTLS certs (e.g. the
         # API container was recreated without the persisted bots/ mount), regenerate the cert set and
