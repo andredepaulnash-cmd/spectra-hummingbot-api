@@ -75,26 +75,37 @@ def test_legacy_credential_listing_is_unchanged_when_paper_mode_off(monkeypatch)
     ]
 
 
-def test_paper_trading_connector_uses_native_hummingbot_adapter_and_simulated_balances(
+def test_paper_trading_connector_shares_keyless_market_data_tracker_and_balances(
     monkeypatch,
 ):
-    from hummingbot.connector.exchange import paper_trade
     from services import unified_connector_service as module
 
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
     balances = []
+    tracker = object()
+    constructed = {}
 
     class FakePaperMarket:
+        def __init__(self, order_book_tracker, target_market, exchange_name):
+            constructed.update(
+                tracker=order_book_tracker,
+                target_market=target_market,
+                exchange_name=exchange_name,
+            )
+
         def set_balance(self, asset, amount):
             balances.append((asset, amount))
 
-    monkeypatch.setattr(
-        paper_trade,
-        "create_paper_trade_market",
-        lambda exchange_name, trading_pairs: (
-            (exchange_name, trading_pairs, FakePaperMarket())[2]
-        ),
-    )
+    class FakeDataConnector:
+        order_book_tracker = tracker
+
+    class FakeService(module.UnifiedConnectorService):
+        def get_data_connector(self, connector_name):
+            assert connector_name == "kraken_paper_trade"
+            return FakeDataConnector()
+
+    monkeypatch.setattr(module, "PaperTradeExchange", FakePaperMarket, raising=False)
+    monkeypatch.setattr(module, "get_connector_class", lambda name: f"class:{name}")
     monkeypatch.setattr(
         module.BackendAPISecurity,
         "login_account",
@@ -113,7 +124,7 @@ def test_paper_trading_connector_uses_native_hummingbot_adapter_and_simulated_ba
         },
     )
 
-    service = UnifiedConnectorService.__new__(UnifiedConnectorService)
+    service = FakeService.__new__(FakeService)
     service.secrets_manager = object()
     service._conn_settings = {
         "kraken": object(),
@@ -126,6 +137,11 @@ def test_paper_trading_connector_uses_native_hummingbot_adapter_and_simulated_ba
     )
 
     assert isinstance(connector, FakePaperMarket)
+    assert constructed == {
+        "tracker": tracker,
+        "target_market": "class:kraken",
+        "exchange_name": "kraken",
+    }
     assert balances == [("USD", 1000.0), ("BTC", 0.0)]
 
 
