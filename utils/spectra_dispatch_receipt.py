@@ -160,7 +160,7 @@ def verify_and_consume_receipt(
                 raise SpectraDispatchReceiptError("Spectra dispatch receipt account scope does not match")
             if not isinstance(config, dict):
                 raise SpectraDispatchReceiptError("Executor configuration is not an object")
-            if config.get("connector_name") != payload.get("connector_name"):
+            if str(config.get("connector_name") or "").strip().lower() != payload.get("connector_name"):
                 raise SpectraDispatchReceiptError("Spectra dispatch receipt connector scope does not match")
             if config.get("trading_pair") != payload.get("trading_pair"):
                 raise SpectraDispatchReceiptError("Spectra dispatch receipt market scope does not match")
