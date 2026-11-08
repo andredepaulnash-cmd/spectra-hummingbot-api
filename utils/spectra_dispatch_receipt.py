@@ -69,7 +69,17 @@ def protected_mutation(method: str, path: str) -> bool:
     path = normalize_path(path)
     if method not in {"POST", "PUT", "PATCH", "DELETE"}:
         return False
-    if path.endswith("/search") or path.endswith("/preview") or path.endswith("/quote"):
+    if (
+        path.endswith("/search")
+        or path.endswith("/preview")
+        or path.endswith("/quote")
+        or path in {
+            "/trading/positions",
+            "/trading/orders/active",
+            "/trading/trades",
+            "/trading/funding-payments",
+        }
+    ):
         return False
 
     prefixes = (
