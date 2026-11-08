@@ -23,6 +23,7 @@ dependencies:
       # Pinned to the exact Hummingbot core package reviewed for the Spectra API.
       # The runtime compatibility guard independently enforces this version.
       - hummingbot==20260922
+      - cryptography>=44.0.0
       - geckoterminal-py>=0.3.1
       - msgpack>=1.0.5
       - flake8
