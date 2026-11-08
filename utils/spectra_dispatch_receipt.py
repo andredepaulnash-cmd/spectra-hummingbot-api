@@ -11,6 +11,7 @@ import re
 import base64
 import sqlite3
 import time
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -179,6 +180,19 @@ def verify_and_consume_receipt(
     )
     if any(not isinstance(payload.get(field), str) or not payload[field].strip() for field in required):
         raise SpectraDispatchReceiptError("Spectra dispatch receipt is missing required scope")
+    if payload["intent"] not in {"ENTRY", "RECOVERY", "EXIT", "CANCEL"}:
+        raise SpectraDispatchReceiptError("Spectra dispatch receipt intent is unsupported")
+    expected_policy = os.getenv(
+        "SPECTRA_DISPATCH_POLICY_VERSION", "spectra-policy-v1"
+    ).strip()
+    if payload["policy_version"] != expected_policy:
+        raise SpectraDispatchReceiptError("Spectra dispatch receipt policy version is not accepted")
+    try:
+        amount = Decimal(payload["amount"])
+    except (InvalidOperation, ValueError) as exc:
+        raise SpectraDispatchReceiptError("Spectra dispatch receipt amount is invalid") from exc
+    if not amount.is_finite() or amount <= 0:
+        raise SpectraDispatchReceiptError("Spectra dispatch receipt amount must be positive")
 
     receipt_id = payload["receipt_id"]
     if not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", receipt_id):
