@@ -47,6 +47,7 @@ from fastapi.responses import JSONResponse  # noqa: E402
 from fastapi.security import HTTPBasic, HTTPBasicCredentials  # noqa: E402
 from hummingbot.client.config.client_config_map import GatewayConfigMap  # noqa: E402
 from hummingbot.client.config.config_crypt import ETHKeyFileSecretManger  # noqa: E402
+from hummingbot.client.settings import AllConnectorSettings  # noqa: E402
 from hummingbot.core.gateway.gateway_http_client import GatewayHttpClient  # noqa: E402
 
 from config import settings, warn_if_insecure_security_defaults  # noqa: E402
@@ -203,7 +204,27 @@ async def lifespan(app: FastAPI):
         logging.warning(f"Error reading conf_client.yml: {e}, defaulting global quote token to USDT")
 
     # =========================================================================
-    # 2. UnifiedConnectorService - Single source of truth for all connectors
+    # 2. Register Hummingbot's native paper-trade connector classes
+    # =========================================================================
+
+    if SPECTRA_PAPER_ONLY:
+        configured_names = configured_paper_connectors()
+        base_names = [name.removesuffix("_paper_trade") for name in configured_names]
+        connector_settings = AllConnectorSettings.get_connector_settings()
+        unknown_names = [name for name in base_names if name not in connector_settings]
+        if unknown_names:
+            raise RuntimeError(
+                "Configured paper connectors are not installed in this Hummingbot "
+                f"build: {', '.join(unknown_names)}"
+            )
+        AllConnectorSettings.initialize_paper_trade_settings(base_names)
+        logging.info(
+            "Registered native Hummingbot paper connectors: %s",
+            ", ".join(configured_names) or "(none)",
+        )
+
+    # =========================================================================
+    # 3. UnifiedConnectorService - Single source of truth for all connectors
     # =========================================================================
 
     connector_service = UnifiedConnectorService(
