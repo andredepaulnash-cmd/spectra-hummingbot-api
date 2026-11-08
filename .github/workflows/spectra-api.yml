@@ -117,7 +117,7 @@ jobs:
           EOF
           python spectra-core/scripts/generate_spectra_dispatch_keys.py --core-env "$RUNNER_TEMP/spectra-core.env" --api-env .env
           chmod 600 .env
-      - name: Start paper-only API without host container socket
+      - name: Start paper-only API and initialize Kraken paper connector
         shell: bash
         run: |
           sed \
@@ -130,13 +130,27 @@ jobs:
             docker-compose.yml > docker-compose.alpha-ci.yml
           ! grep -Eq 'docker.sock|host.docker.internal|host-gateway' docker-compose.alpha-ci.yml
           docker compose -p spectra-ci -f docker-compose.alpha-ci.yml up -d
+          API_AUTH="spectra_alpha:$(sed -n 's/^PASSWORD=//p' .env)"
           for attempt in $(seq 1 180); do
-            if curl -fsS -u "spectra_alpha:$(sed -n 's/^PASSWORD=//p' .env)" http://127.0.0.1:8000/spectra/runtime > "$RUNNER_TEMP/spectra-runtime.json"; then
-              break
+            curl -fsS -u "$API_AUTH" http://127.0.0.1:8000/openapi.json >/dev/null 2>&1 && break
+            sleep 2
+          done
+          curl -fsS -u "$API_AUTH" http://127.0.0.1:8000/openapi.json >/dev/null || {
+            docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --tail=200
+            exit 1
+          }
+          curl -fsS -u "$API_AUTH" -H 'Content-Type: application/json' \
+            -X POST -d '{}' \
+            http://127.0.0.1:8000/accounts/add-credential/master_account/kraken_paper_trade
+          for attempt in $(seq 1 180); do
+            if curl -fsS -u "$API_AUTH" http://127.0.0.1:8000/spectra/runtime > "$RUNNER_TEMP/spectra-runtime.json"; then
+              if python -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if any(n.endswith("/kraken_paper_trade") for n in d.get("paper_connectors", [])) else 1)' "$RUNNER_TEMP/spectra-runtime.json"; then
+                break
+              fi
             fi
             sleep 2
           done
-          curl -fsS -u "spectra_alpha:$(sed -n 's/^PASSWORD=//p' .env)" http://127.0.0.1:8000/spectra/runtime > "$RUNNER_TEMP/spectra-runtime.json" || {
+          curl -fsS -u "$API_AUTH" http://127.0.0.1:8000/spectra/runtime > "$RUNNER_TEMP/spectra-runtime.json" || {
             docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --tail=200
             exit 1
           }
@@ -150,7 +164,7 @@ jobs:
           assert runtime["paper_connector_count"] >= 1, runtime
           assert any(name.endswith("/kraken_paper_trade") for name in runtime["paper_connectors"]), runtime
           assert runtime["live_dispatch_available"] is False, runtime
-          print("Spectra API runtime reports PAPER_ONLY; live dispatch is unavailable.")
+          print("Verified: Kraken paper connector initialized; live dispatch is unavailable.")
           PY
           grep -q '^SPECTRA_PAPER_ONLY=true$' .env
           grep -q '^SPECTRA_ALLOW_LIVE_EXECUTION=false$' .env
