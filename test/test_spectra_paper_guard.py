@@ -1,6 +1,7 @@
 import pytest
 
 from utils.spectra_paper_guard import (
+    configured_paper_connectors,
     is_paper_allowed_post_path,
     is_paper_trade_connector_name,
     paper_allowed_post_paths,
@@ -109,3 +110,20 @@ def test_api_defaults_to_paper_only(monkeypatch):
     monkeypatch.delenv("SPECTRA_PAPER_ONLY", raising=False)
     monkeypatch.delenv("SPECTRA_ALLOW_LIVE_EXECUTION", raising=False)
     assert paper_only_enabled() is True
+
+def test_configured_paper_connectors_accepts_only_explicit_paper_names(monkeypatch):
+    monkeypatch.setenv(
+        "SPECTRA_PAPER_CONNECTORS",
+        "kraken_paper_trade, binance_paper_trade,kraken_paper_trade",
+    )
+    assert configured_paper_connectors() == (
+        "kraken_paper_trade",
+        "binance_paper_trade",
+    )
+
+    monkeypatch.setenv("SPECTRA_PAPER_CONNECTORS", "kraken")
+    with pytest.raises(ValueError, match="only paper connector names"):
+        configured_paper_connectors()
+
+    monkeypatch.setenv("SPECTRA_PAPER_CONNECTORS", "")
+    assert configured_paper_connectors() == ()
