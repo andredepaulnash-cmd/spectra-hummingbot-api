@@ -761,6 +761,47 @@ class UnifiedConnectorService:
                 trading_required=True,
             )
 
+        if connector_name.endswith("_paper_trade"):
+            # Hummingbot paper connectors are wrappers around the real exchange's
+            # public order-book tracker; there is no kraken_paper_trade Python module.
+            base_connector_name = connector_name.removesuffix("_paper_trade")
+            if base_connector_name not in self._conn_settings:
+                raise UnknownConnectorError(
+                    f"Base exchange connector {base_connector_name} is not installed"
+                )
+
+            from hummingbot.connector.exchange.paper_trade import create_paper_trade_market
+
+            connector = create_paper_trade_market(base_connector_name, [])
+
+            # Match Hummingbot's native ConnectorManager behavior: simulated
+            # balances come from the account's conf_client.yml paper_trade section.
+            try:
+                account_config = fs_util.read_yaml_file(
+                    "credentials/master_account/conf_client.yml"
+                )
+            except FileNotFoundError:
+                account_config = {}
+                logger.warning(
+                    "No conf_client.yml found; Kraken paper connector will start "
+                    "without configured simulated balances"
+                )
+            paper_config = account_config.get("paper_trade", {})
+            balances = paper_config.get("paper_trade_account_balance", {})
+            if not isinstance(balances, dict):
+                raise RuntimeError(
+                    "paper_trade_account_balance must be a mapping in conf_client.yml"
+                )
+            for asset, balance in balances.items():
+                connector.set_balance(asset, balance)
+
+            logger.info(
+                "Created native Hummingbot paper connector %s using base exchange %s",
+                connector_name,
+                base_connector_name,
+            )
+            return connector
+
         conn_setting = self._conn_settings[connector_name]
         keys = BackendAPISecurity.api_keys(connector_name)
 
@@ -776,12 +817,23 @@ class UnifiedConnectorService:
     def _create_data_connector(self, connector_name: str) -> ConnectorBase:
         """Create a non-authenticated data connector."""
         require_paper_trade_connector(connector_name)
-        conn_setting = self._conn_settings.get(connector_name)
+        # A paper-trade name is a Hummingbot wrapper identity, not a Python
+        # exchange module. Public market-data connectors must use the base exchange.
+        base_connector_name = (
+            connector_name.removesuffix("_paper_trade")
+            if connector_name.endswith("_paper_trade")
+            else connector_name
+        )
+        conn_setting = self._conn_settings.get(base_connector_name)
         if not conn_setting:
-            raise UnknownConnectorError(f"Connector {connector_name} not found")
+            raise UnknownConnectorError(
+                f"Connector {base_connector_name} not found"
+            )
 
         # Get config keys but don't use real API keys
-        connector_config = AllConnectorSettings.get_connector_config_keys(connector_name)
+        connector_config = AllConnectorSettings.get_connector_config_keys(
+            base_connector_name
+        )
         if getattr(connector_config, "use_auth_for_public_endpoints", False):
             api_keys = api_keys_from_connector_config_map(
                 ClientConfigAdapter(connector_config)
@@ -801,7 +853,7 @@ class UnifiedConnectorService:
             api_keys=api_keys,
         )
 
-        connector_class = get_connector_class(connector_name)
+        connector_class = get_connector_class(base_connector_name)
         connector = connector_class(**init_params)
 
         logger.info(f"Created data connector: {connector_name}")
