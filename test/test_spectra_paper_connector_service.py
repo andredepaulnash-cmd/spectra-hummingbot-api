@@ -63,6 +63,7 @@ def test_available_credentials_are_filtered_to_paper_connectors(monkeypatch):
 
 def test_legacy_credential_listing_is_unchanged_when_paper_mode_off(monkeypatch):
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "false")
+    monkeypatch.setenv("SPECTRA_ALLOW_LIVE_EXECUTION", "true")
     monkeypatch.setattr(
         "services.unified_connector_service.fs_util.list_files",
         lambda _path: ["kraken.yml", "kraken_paper_trade.yml"],
