@@ -434,7 +434,11 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 # Execution/deployment writes require a short-lived, exact-scope receipt signed by Core.
 # Missing public-key configuration fails closed at the protected route boundary.
-app.add_middleware(SpectraDispatchReceiptMiddleware)
+app.add_middleware(
+    SpectraDispatchReceiptMiddleware,
+    username=settings.security.username,
+    password=settings.security.password,
+)
 
 
 @app.middleware("http")
