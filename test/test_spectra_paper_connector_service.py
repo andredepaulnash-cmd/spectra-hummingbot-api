@@ -78,6 +78,7 @@ def test_legacy_credential_listing_is_unchanged_when_paper_mode_off(monkeypatch)
 def test_paper_trading_connector_shares_keyless_market_data_tracker_and_balances(
     monkeypatch,
 ):
+    from hummingbot.connector.exchange.paper_trade import paper_trade_exchange
     from services import unified_connector_service as module
 
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
@@ -104,7 +105,9 @@ def test_paper_trading_connector_shares_keyless_market_data_tracker_and_balances
             assert connector_name == "kraken_paper_trade"
             return FakeDataConnector()
 
-    monkeypatch.setattr(module, "PaperTradeExchange", FakePaperMarket, raising=False)
+    monkeypatch.setattr(
+        paper_trade_exchange, "PaperTradeExchange", FakePaperMarket
+    )
     monkeypatch.setattr(module, "get_connector_class", lambda name: f"class:{name}")
     monkeypatch.setattr(
         module.BackendAPISecurity,
