@@ -403,14 +403,14 @@ async def lifespan(app: FastAPI):
 
     logging.info("Shutting down services...")
 
+    websocket_manager.shutdown()
+    await executor_ws_manager.shutdown()
+    await accounts_service.stop()
+    await executor_service.stop()
+    await connector_service.stop_all()
     if not SPECTRA_PAPER_ONLY:
-        websocket_manager.shutdown()
-        await executor_ws_manager.shutdown()
         await bots_orchestrator.stop()
-        await accounts_service.stop()
-        await executor_service.stop()
         market_data_service.stop()
-        await connector_service.stop_all()
         GatewayHttpClient.get_instance().stop_monitor()
         docker_service.cleanup()
     await db_manager.close()
