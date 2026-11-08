@@ -1,7 +1,10 @@
 services:
   hummingbot-api:
     container_name: hummingbot-api
-    image: hummingbot/hummingbot-api:latest
+    image: spectra-finance/hummingbot-api:local
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: unless-stopped
     ports:
       # SEC: loopback by default — this API holds exchange credentials and can move funds,
