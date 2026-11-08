@@ -4,6 +4,7 @@ from utils.spectra_paper_guard import (
     is_paper_allowed_post_path,
     is_paper_trade_connector_name,
     paper_allowed_post_paths,
+    paper_only_enabled,
     require_paper_trade_connector,
     should_block_paper_mutation,
     validate_paper_connector_configuration,
@@ -102,3 +103,9 @@ def test_paper_connector_config_rejects_nonempty_secrets(monkeypatch):
             "kraken",
             {"api_key": ""},
         )
+
+
+def test_api_defaults_to_paper_only(monkeypatch):
+    monkeypatch.delenv("SPECTRA_PAPER_ONLY", raising=False)
+    monkeypatch.delenv("SPECTRA_ALLOW_LIVE_EXECUTION", raising=False)
+    assert paper_only_enabled() is True
