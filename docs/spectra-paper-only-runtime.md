@@ -56,3 +56,14 @@ The Spectra API environment pins the Hummingbot Python package to `20260922`, an
 The Docker Compose service builds this repository's Dockerfile into the local `spectra-finance/hummingbot-api:local` image. `make deploy` now depends on `make build`, so deployment does not silently pull the mutable upstream `hummingbot/hummingbot-api:latest` image instead of the Spectra-reviewed source. The Miniconda base image and the remaining transitive Python/Conda dependencies are still mutable; a complete digest lock and image attestation remain future hardening work.
 
 The selected package version is an available Hummingbot PyPI release (20260922). It is a compatibility baseline for the Spectra paper runtime, not proof of the full connector integration; the expanded local/API-image paper test remains required before the product can be called operational.
+
+
+## Core-issued API dispatch receipts
+
+Every mutating request under the execution/deployment route families (`/executors`, `/trading`, `/gateway`, `/bots`, `/docker`, `/controllers`, and `/scripts`) is now guarded by a short-lived Ed25519 receipt signed by Spectra Core. Search/read routes remain available. The API verifies the HTTP method, normalized path, canonical request-body digest, executor-config digest, proposal/account/connector/market/intent/amount scope, policy version, issue/expiry times, and signature before the route runs.
+
+The API stores consumed receipt IDs in a durable SQLite ledger under `bots/data/spectra_dispatch_receipts.sqlite3` (or `SPECTRA_DISPATCH_RECEIPT_DB`). A receipt is single-use; a replay is rejected. If a request times out after receipt consumption, reconcile the original proposal/dispatch rather than retrying with the same receipt.
+
+Configure `SPECTRA_DISPATCH_PUBLIC_KEY` with the base64url-encoded 32-byte Ed25519 public key generated for the matching Spectra Core private key. `SPECTRA_REQUIRE_CORE_RECEIPTS` defaults to true. If the public key or receipt ledger is unavailable, protected writes fail closed. The Core process must keep its private key local and supply the receipt header on the exact authorized API request. Do not place the private key in this API repository, Docker image, logs, or chat.
+
+The API verifier currently has a complete testable receipt contract. Until the matching Core-side signer and request-header integration are installed, executor creation and other protected writes intentionally remain unavailable. This is a safety interlock, not a completed end-to-end integration.
