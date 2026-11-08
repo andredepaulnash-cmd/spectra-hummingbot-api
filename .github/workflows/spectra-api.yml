@@ -121,12 +121,12 @@ jobs:
         shell: bash
         run: |
           sed \\
-            -e '\\|/var/run/docker.sock:/var/run/docker.sock|d' \\
-            -e '/extra_hosts:/d' \\
-            -e '/host.docker.internal:host-gateway/d' \\
-            -e 's/container_name: hummingbot-api/container_name: spectra-ci-hummingbot-api/' \\
-            -e 's/container_name: hummingbot-broker/container_name: spectra-ci-hummingbot-broker/' \\
-            -e 's/container_name: hummingbot-postgres/container_name: spectra-ci-hummingbot-postgres/' \\
+            -e '\\|/var/run/docker.sock:/var/run/docker.sock|d' \
+            -e '/extra_hosts:/d' \
+            -e '/host.docker.internal:host-gateway/d' \
+            -e 's/container_name: hummingbot-api/container_name: spectra-ci-hummingbot-api/' \
+            -e 's/container_name: hummingbot-broker/container_name: spectra-ci-hummingbot-broker/' \
+            -e 's/container_name: hummingbot-postgres/container_name: spectra-ci-hummingbot-postgres/' \
             docker-compose.yml > docker-compose.alpha-ci.yml
           ! grep -Eq 'docker.sock|host.docker.internal|host-gateway' docker-compose.alpha-ci.yml
           docker compose -p spectra-ci -f docker-compose.alpha-ci.yml up -d
@@ -150,8 +150,16 @@ jobs:
           assert runtime["live_dispatch_available"] is False, runtime
           print("Spectra API runtime reports PAPER_ONLY; live dispatch is unavailable.")
           PY
-          grep -q '^SPECTRA_PAPER_ONLY=true .env
-          grep -q '^SPECTRA_ALLOW_LIVE_EXECUTION=false .env
+          grep -q '^SPECTRA_PAPER_ONLY=true
+      - name: Stop paper-only API stack
+        if: always()
+        run: docker compose -p spectra-ci -f docker-compose.alpha-ci.yml down -v || true
+ .env
+          grep -q '^SPECTRA_ALLOW_LIVE_EXECUTION=false
+      - name: Stop paper-only API stack
+        if: always()
+        run: docker compose -p spectra-ci -f docker-compose.alpha-ci.yml down -v || true
+ .env
       - name: Stop paper-only API stack
         if: always()
         run: docker compose -p spectra-ci -f docker-compose.alpha-ci.yml down -v || true
