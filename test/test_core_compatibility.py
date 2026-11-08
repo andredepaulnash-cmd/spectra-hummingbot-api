@@ -34,6 +34,7 @@ def test_the_list_is_empty_because_nothing_extra_is_required_right_now():
 def test_a_missing_field_is_a_startup_error_naming_it(monkeypatch):
     """The whole point: loud, and specific enough to act on."""
     monkeypatch.setattr(core_compatibility, "version", lambda name: "20260922")
+    monkeypatch.setattr(core_compatibility, "_resolve", lambda path: SimpleNamespace())
     monkeypatch.setattr(
         core_compatibility, "REQUIRED_CORE_SURFACE",
         [("hummingbot.strategy_v2.models.executors_info:ExecutorInfo", "not_a_field", "a field from the future")],
