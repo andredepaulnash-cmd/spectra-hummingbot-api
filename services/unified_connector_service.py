@@ -685,16 +685,20 @@ class UnifiedConnectorService:
         require_paper_trade_connector(connector_name)
         connector = self._create_trading_connector(account_name, connector_name)
 
-        # Initialize symbol map and trading rules
-        await connector._initialize_trading_pair_symbol_map()
-        await connector._update_trading_rules()
-        await connector._update_balances()
+        is_paper_trade = connector_name.endswith("_paper_trade")
 
-        # Perpetual-specific setup
-        if self._is_perpetual_connector(connector):
-            if PositionMode.HEDGE in connector.supported_position_modes():
-                connector.set_position_mode(PositionMode.HEDGE)
-            await connector._update_positions()
+        if not is_paper_trade:
+            # Live ExchangePyBase connectors own these exchange lifecycle calls.
+            # Hummingbot's PaperTradeExchange is an ExchangeBase wrapper: its
+            # order-book tracker and simulated balances are managed separately.
+            await connector._initialize_trading_pair_symbol_map()
+            await connector._update_trading_rules()
+            await connector._update_balances()
+
+            if self._is_perpetual_connector(connector):
+                if PositionMode.HEDGE in connector.supported_position_modes():
+                    connector.set_position_mode(PositionMode.HEDGE)
+                await connector._update_positions()
 
         # Load existing orders from database
         if self.db_manager:
@@ -717,17 +721,24 @@ class UnifiedConnectorService:
         # Initialize metrics
         self._initialize_metrics(connector, account_name, connector_name, cache_key)
 
-        # Start network tasks
-        await self._start_connector_network(connector)
+        # ExchangePyBase owns polling/user-stream lifecycle. The native paper
+        # adapter starts its base exchange order-book tracker lazily when the
+        # first pair is registered by initialize_order_book().
+        if not is_paper_trade:
+            await self._start_connector_network(connector)
 
-        # Only update order status for orders loaded from DB (balances, rules, positions
-        # were already fetched above — no need to repeat via _update_connector_state)
-        if connector.in_flight_orders:
-            try:
-                connector._set_current_timestamp(time.time())
-                await connector._update_order_status()
-            except Exception as e:
-                logger.error(f"Error updating initial order status for {connector_name}: {e}")
+            # Only update order status for orders loaded from DB (balances, rules,
+            # positions were already fetched above — no need to repeat state refresh).
+            if connector.in_flight_orders:
+                try:
+                    connector._set_current_timestamp(time.time())
+                    await connector._update_order_status()
+                except Exception as e:
+                    logger.error(
+                        "Error updating initial order status for %s: %s",
+                        connector_name,
+                        e,
+                    )
 
         logger.info(f"Initialized trading connector {connector_name} for {account_name}")
         return connector
@@ -964,6 +975,11 @@ class UnifiedConnectorService:
         already handles that.
         """
         try:
+            # PaperTradeExchange updates its simulated balances internally as
+            # paper fills occur. It has no ExchangePyBase _update_balances API.
+            if connector_name.endswith("_paper_trade"):
+                return
+
             connector._set_current_timestamp(time.time())
             await connector._update_balances()
 
