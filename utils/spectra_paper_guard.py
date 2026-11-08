@@ -59,6 +59,21 @@ def is_paper_trade_connector_name(connector_name: str) -> bool:
     return str(connector_name).strip().lower().endswith("_paper_trade")
 
 
+def configured_paper_connectors() -> tuple[str, ...]:
+    """Return explicitly configured paper connector names, rejecting live names."""
+    raw = os.getenv("SPECTRA_PAPER_CONNECTORS", "")
+    names = tuple(dict.fromkeys(
+        name.strip() for name in raw.split(",") if name.strip()
+    ))
+    invalid = [name for name in names if not is_paper_trade_connector_name(name)]
+    if invalid:
+        raise ValueError(
+            "SPECTRA_PAPER_CONNECTORS may contain only paper connector names; "
+            f"rejected: {', '.join(invalid)}"
+        )
+    return names
+
+
 def require_paper_trade_connector(connector_name: str) -> None:
     """Reject live CEX/DEX connectors whenever Spectra paper mode is enabled."""
     if paper_only_enabled() and not is_paper_trade_connector_name(connector_name):
