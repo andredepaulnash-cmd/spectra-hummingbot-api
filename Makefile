@@ -45,7 +45,7 @@ run: emqx-auth
 #            `tailscale serve` on the existing node instead of joining twice
 #   sidecar  the API gets its own tailnet node, in userspace mode when a
 #            native daemon is already present
-deploy: $(SETUP_SENTINEL) emqx-auth
+deploy: $(SETUP_SENTINEL) emqx-auth build
 	@set -a; [ -f .env ] && . ./.env; set +a; \
 	. ./tailnet-state.sh; \
 	mode="$$(tailnet_mode)" || exit 1; \
@@ -221,7 +221,7 @@ install-pre-commit:
 
 # Build Docker image
 build:
-	docker build -t hummingbot/hummingbot-api:latest .
+	docker compose build hummingbot-api
 
 # Reset to near-origin state:
 #   - stops Docker containers (with volume wipe) and/or source uvicorn if running
