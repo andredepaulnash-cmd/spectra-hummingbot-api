@@ -206,7 +206,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           docker cp test/. spectra-ci-hummingbot-api:/hummingbot-api/test/
-          docker exec spectra-ci-hummingbot-api pytest -q /hummingbot-api/test/test_spectra_paper_connector_service.py
+          docker exec spectra-ci-hummingbot-api pytest -q /hummingbot-api/test/test_spectra_paper_connector_service.py /hummingbot-api/test/test_ticker_sources.py
 
       - name: Verify Kraken paper connector runtime
         shell: bash
