@@ -201,6 +201,13 @@ jobs:
           docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --tail=200 || true
           exit 1
 
+      - name: Run native paper connector lifecycle regressions
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker cp test/. spectra-ci-hummingbot-api:/hummingbot-api/test/
+          docker exec spectra-ci-hummingbot-api pytest -q /hummingbot-api/test/test_spectra_paper_connector_service.py
+
       - name: Verify Kraken paper connector runtime
         shell: bash
         run: |
