@@ -473,7 +473,13 @@ class UnifiedConnectorService:
         # Start the public connector only after validation, so an invalid pair
         # cannot enter its shared WebSocket subscription list.
         if is_paper_trade:
-            if trading_pair not in data_connector.order_book_tracker.order_books:
+            if not self._data_connectors_started.get(connector_name, False):
+                success = await self.ensure_data_connector_started(
+                    connector_name, trading_pair
+                )
+                if not success:
+                    return False
+            elif trading_pair not in data_connector.order_book_tracker.order_books:
                 success = await data_connector.add_trading_pair(trading_pair)
                 if not success:
                     return False
