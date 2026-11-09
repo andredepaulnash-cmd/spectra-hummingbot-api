@@ -593,9 +593,19 @@ class MarketDataService:
                 # live order execution.
                 base_connector_name = connector_name.lower().removesuffix("_paper_trade")
                 connector = self._connector_service.get_data_connector(connector_name)
-                tickers = await fetch_tickers(
-                    connector, base_connector_name, raise_on_error=True
-                )
+                try:
+                    tickers = await fetch_tickers(
+                        connector, base_connector_name, raise_on_error=True
+                    )
+                except Exception as exc:
+                    if base_connector_name != "kraken":
+                        raise
+                    logger.warning(
+                        "Kraken public ticker batch failed; trying fresh public "
+                        "order-book midpoints for paper price reads: %s",
+                        exc,
+                    )
+                    tickers = {}
                 prices = {}
                 for pair in trading_pairs:
                     ticker = tickers.get(pair)
