@@ -49,6 +49,7 @@ from utils.executor_order_provenance import format_executor_order_provenance_rec
 from utils.executor_trade_provenance import format_executor_trade_provenance_record
 from utils.position_hold_accounting import format_active_position_hold_accounting_record
 from utils.trading_pair import InvalidTradingPair, split_trading_pair
+from utils.spectra_paper_guard import is_paper_trade_connector_name, paper_only_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +236,8 @@ class ExecutorService:
                 records = await repo.get_active_position_holds()
 
                 for record in records:
+                    if paper_only_enabled() and not is_paper_trade_connector_name(record.connector_name):
+                        continue
                     controller_id = record.controller_id or "main"
                     position_key = self._get_position_key(
                         record.account_name,
@@ -998,6 +1001,10 @@ class ExecutorService:
                     )
 
                     for record in db_executors:
+                        # Spectra paper mode must not mix legacy live executors
+                        # into the paper ledger or operator-visible paper book.
+                        if paper_only_enabled() and not is_paper_trade_connector_name(record.connector_name):
+                            continue
                         # Skip if already in active executors (safety check)
                         if record.executor_id not in self._active_executors:
                             result.append(self._format_db_record(record))
@@ -1031,6 +1038,8 @@ class ExecutorService:
 
                     record = await repo.get_executor_by_id(executor_id)
                     if record:
+                        if paper_only_enabled() and not is_paper_trade_connector_name(record.connector_name):
+                            return None
                         return self._format_db_record(record)
             except Exception as e:
                 logger.error(f"Error fetching executor from database: {e}")

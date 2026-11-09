@@ -50,6 +50,17 @@ class FakeConnector:
         return payload(kwargs) if callable(payload) else payload
 
 
+class KrakenFakeConnector(FakeConnector):
+    async def get_asset_pairs(self):
+        return {
+            "BTC-USD": {
+                "base": "XXBT",
+                "quote": "ZUSD",
+                "altname": "XBTUSD",
+            }
+        }
+
+
 async def run_spec(connector_name: str, connector: FakeConnector) -> Dict[str, Ticker]:
     """Drive one spec end to end, the way _fetch does."""
     spec = TICKER_SPECS[connector_name]
@@ -179,16 +190,17 @@ async def test_bybit_perpetual_passes_dict_path_and_no_limit_id():
 
 
 @pytest.mark.asyncio
-async def test_kraken_keyed_dict_and_24h_base_volume():
-    # `v` and `p` are [today, last_24h] pairs, so the 24h figure is index 1.
-    connector = FakeConnector(
-        {"XBTUSDT": "BTC-USDT"},
-        get_payload={"XBTUSDT": {
+async def test_kraken_raw_asset_pair_key_maps_to_hummingbot_pair():
+    # Kraken's Ticker endpoint keys rows by XXBTZUSD, while the connector symbol
+    # map is keyed by the AssetPairs altname XBTUSD.
+    connector = KrakenFakeConnector(
+        {"XBTUSD": "BTC-USD"},
+        get_payload={"XXBTZUSD": {
             "a": ["102.0", "1", "1.0"], "b": ["100.0", "1", "1.0"], "c": ["101.0", "0.5"],
             "v": ["3.0", "10.0"],
         }},
     )
-    ticker = (await run_spec("kraken", connector))["BTC-USDT"]
+    ticker = (await fetch_tickers(connector, "kraken", raise_on_error=True))["BTC-USD"]
     assert ticker.price == Decimal("101")
     assert ticker.base_volume == Decimal("10.0")
     assert ticker.quote_volume == Decimal("1010.0")

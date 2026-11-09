@@ -6,6 +6,7 @@ from starlette import status
 from deps import get_accounts_service, require_gateway_online
 from models import GatewayWalletCredential, SetDefaultWalletRequest
 from services.accounts_service import AccountsService, validate_safe_name
+from utils.spectra_paper_guard import validate_paper_connector_configuration
 
 router = APIRouter(tags=["Accounts"], prefix="/accounts")
 
@@ -139,6 +140,11 @@ async def add_credential(
     Raises:
         HTTPException: 400 if there's an error adding the credentials
     """
+    try:
+        validate_paper_connector_configuration(connector_name, credentials)
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
     try:
         await accounts_service.add_credentials(account_name, connector_name, credentials)
         return {"message": "Connector credentials added successfully."}

@@ -1,7 +1,10 @@
 services:
   hummingbot-api:
     container_name: hummingbot-api
-    image: hummingbot/hummingbot-api:latest
+    image: localhost/spectra-finance/hummingbot-api:local
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: unless-stopped
     ports:
       # SEC: loopback by default — this API holds exchange credentials and can move funds,
@@ -50,7 +53,7 @@ services:
       - postgres
   emqx:
     container_name: hummingbot-broker
-    image: emqx:5
+    image: docker.io/emqx/emqx:5
     restart: unless-stopped
     environment:
       - EMQX_NAME=emqx
@@ -106,7 +109,7 @@ services:
       retries: 5
   postgres:
     container_name: hummingbot-postgres
-    image: postgres:16
+    image: docker.io/library/postgres:16
     restart: unless-stopped
     environment:
       # These variables automatically create the user and database on first initialization

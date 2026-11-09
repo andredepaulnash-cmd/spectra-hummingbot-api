@@ -21,6 +21,7 @@ from hummingbot.data_feed.candles_feed.data_types import CandlesConfig
 from services.ticker_sources import Ticker, TickerFetchError, TickerUnsupportedError, fetch_tickers
 from services.unified_connector_service import UnknownConnectorError
 from utils.rate_finder import find_rate
+from utils.spectra_paper_guard import is_paper_trade_connector_name
 
 logger = logging.getLogger(__name__)
 
@@ -583,6 +584,87 @@ class MarketDataService:
             Dictionary mapping trading pairs to prices
         """
         try:
+            if is_paper_trade_connector_name(connector_name):
+                # A paper connector is an execution identity, not a market-data
+                # venue. Resolve its keyless public adapter (the connector service
+                # maps *_paper_trade to the base exchange with blank credentials),
+                # then use the exchange's bulk ticker adapter. This avoids asking
+                # an unstarted PaperTradeExchange for prices and never enables
+                # live order execution.
+                base_connector_name = connector_name.lower().removesuffix("_paper_trade")
+                connector = self._connector_service.get_data_connector(connector_name)
+                try:
+                    tickers = await fetch_tickers(
+                        connector, base_connector_name, raise_on_error=True
+                    )
+                except Exception as exc:
+                    if base_connector_name != "kraken":
+                        raise
+                    logger.warning(
+                        "Kraken public ticker batch failed; trying fresh public "
+                        "order-book midpoints for paper price reads: %s",
+                        exc,
+                    )
+                    tickers = {}
+                prices = {}
+                for pair in trading_pairs:
+                    ticker = tickers.get(pair)
+                    if ticker is None and base_connector_name == "kraken":
+                        # Kraken's public AssetPairs metadata may expose the
+                        # Bitcoin base asset as XBT while the configured
+                        # Hummingbot trading pair is BTC. Resolve that one
+                        # canonical alias without changing the requested pair
+                        # returned to the caller or execution adapter.
+                        base, separator, quote = pair.partition("-")
+                        if separator and base.upper() in {"BTC", "XBT"}:
+                            alias = ("XBT" if base.upper() == "BTC" else "BTC") + "-" + quote
+                            ticker = tickers.get(alias)
+                    if ticker is not None:
+                        prices[pair] = float(ticker.price)
+                # Kraken's public ticker adapter can omit a requested
+                # alias even when the pair's public order book is available.
+                # Use a fresh two-sided public book as a read-only midpoint
+                # fallback; never consult paper-simulated fill prices.
+                for pair in trading_pairs:
+                    if pair in prices:
+                        continue
+                    book = await self.get_order_book_data(
+                        connector_name,
+                        pair,
+                        depth=1,
+                        account_name=account_name,
+                    )
+                    if not isinstance(book, dict) or book.get("error"):
+                        continue
+                    observed_at = book.get("timestamp")
+                    try:
+                        observed = float(observed_at)
+                        bids = book.get("bids") or []
+                        asks = book.get("asks") or []
+                        bid = float(bids[0][0]) if bids else 0.0
+                        ask = float(asks[0][0]) if asks else 0.0
+                    except (TypeError, ValueError, IndexError, KeyError):
+                        continue
+                    now = time.time()
+                    if (
+                        observed <= 0
+                        or observed > now
+                        or now - observed > self._ticker_max_age
+                        or bid <= 0
+                        or ask <= bid
+                    ):
+                        continue
+                    prices[pair] = (bid + ask) / 2
+
+                if not prices:
+                    return {
+                        "error": (
+                            f"No public market prices returned for {connector_name}: "
+                            f"requested {', '.join(trading_pairs) or 'no trading pairs'}"
+                        )
+                    }
+                return prices
+
             connector = self._connector_service.get_best_connector_for_market(
                 connector_name, account_name
             )
@@ -912,9 +994,17 @@ class MarketDataService:
             Dictionary mapping trading pairs to their rules
         """
         try:
-            connector = self._connector_service.get_best_connector_for_market(
-                connector_name, account_name
-            )
+            if connector_name.endswith("_paper_trade"):
+                # PaperTradeExchange is an ExchangeBase wrapper and deliberately
+                # does not implement ExchangePyBase.trading_rules. Resolve rules
+                # through its keyless base-exchange data connector instead.
+                connector = self._connector_service.get_data_connector(
+                    connector_name
+                )
+            else:
+                connector = self._connector_service.get_best_connector_for_market(
+                    connector_name, account_name
+                )
 
             if not connector:
                 return {"error": f"No connector available for {connector_name}"}

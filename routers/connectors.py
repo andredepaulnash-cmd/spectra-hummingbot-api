@@ -6,6 +6,11 @@ from hummingbot.client.settings import AllConnectorSettings
 from deps import get_accounts_service
 from services.accounts_service import AccountsService
 from services.market_data_service import MarketDataService
+from utils.spectra_paper_guard import (
+    is_paper_trade_connector_name,
+    paper_only_enabled,
+    require_paper_trade_connector,
+)
 
 router = APIRouter(tags=["Connectors"], prefix="/connectors")
 
@@ -19,8 +24,11 @@ async def available_connectors():
         List of connector names supported by the system (excludes DEX providers which use Gateway networks)
     """
     all_connectors = AllConnectorSettings.get_connector_settings().keys()
-    # Filter out DEX providers (contain '/') - these are accessed via Gateway networks
-    return [c for c in all_connectors if '/' not in c]
+    # Filter out DEX providers (contain '/') - these are accessed via Gateway networks.
+    connectors = [c for c in all_connectors if '/' not in c]
+    if paper_only_enabled():
+        connectors = [c for c in connectors if is_paper_trade_connector_name(c)]
+    return connectors
 
 
 @router.get("/{connector_name}/config-map", response_model=Dict[str, dict])
@@ -39,6 +47,7 @@ async def get_connector_config_map(connector_name: str, accounts_service: Accoun
         - allowed_values: List of accepted values (only for Literal fields)
         - prompt: Human readable prompt from the Hummingbot config map (when defined)
     """
+    require_paper_trade_connector(connector_name)
     return accounts_service.get_connector_config_map(connector_name)
 
 

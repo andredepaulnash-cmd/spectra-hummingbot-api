@@ -57,13 +57,25 @@ async def require_gateway_online(accounts_service: AccountsService = Depends(get
 
 
 def get_docker_service(request: Request) -> DockerService:
-    """Get DockerService from app state."""
-    return request.app.state.docker_service
+    """Get DockerService from app state, or fail clearly when paper-only disables it."""
+    service = request.app.state.docker_service
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Docker service is disabled in Spectra paper-only mode.",
+        )
+    return service
 
 
 def get_gateway_service(request: Request) -> GatewayService:
-    """Get GatewayService from app state."""
-    return request.app.state.gateway_service
+    """Get GatewayService from app state, or fail clearly when paper-only disables it."""
+    service = request.app.state.gateway_service
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Gateway service is disabled in Spectra paper-only mode.",
+        )
+    return service
 
 
 def get_gateway_clmm_service(request: Request) -> GatewayCLMMService:

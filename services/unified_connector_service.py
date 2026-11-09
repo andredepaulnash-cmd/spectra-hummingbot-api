@@ -31,6 +31,11 @@ from hummingbot.core.utils.async_utils import safe_ensure_future
 from utils.file_system import fs_util
 from utils.hummingbot_api_config_adapter import HummingbotAPIConfigAdapter
 from utils.security import BackendAPISecurity
+from utils.spectra_paper_guard import (
+    is_paper_trade_connector_name,
+    paper_only_enabled,
+    require_paper_trade_connector,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +141,7 @@ class UnifiedConnectorService:
         Returns:
             Initialized trading connector
         """
+        require_paper_trade_connector(connector_name)
         cache_key = f"{account_name}:{connector_name}"
 
         # Create lock for this cache key if it doesn't exist
@@ -215,6 +221,7 @@ class UnifiedConnectorService:
         Returns:
             Non-authenticated connector instance
         """
+        require_paper_trade_connector(connector_name)
         if connector_name not in self._data_connectors:
             self._data_connectors[connector_name] = self._create_data_connector(
                 connector_name
@@ -248,23 +255,40 @@ class UnifiedConnectorService:
             if trading_pair not in connector._trading_pairs:
                 connector._trading_pairs.append(trading_pair)
 
-            # Start network
+            # Start network and wait for the tracker's actual readiness signal.
+            # The stream-listener task being allocated is not proof that the
+            # initial REST snapshot/order-book initialization has completed.
+            # PaperTradeExchange.ready depends on tracker.ready, so returning
+            # after a fixed sleep can produce a false-negative paper market.
             await connector.start_network()
-            self._data_connectors_started[connector_name] = True
             logger.info(f"Started data connector: {connector_name} with pair {trading_pair}")
 
-            # Wait for order book tracker to be ready
-            max_wait = 30
-            waited = 0
+            max_wait = 30.0
+            waited = 0.0
             tracker = connector.order_book_tracker
             while waited < max_wait:
-                if tracker._order_book_stream_listener_task is not None:
-                    await asyncio.sleep(2.0)
-                    break
+                if tracker.ready:
+                    self._data_connectors_started[connector_name] = True
+                    logger.info(
+                        "Order book tracker ready for %s with pair %s",
+                        connector_name,
+                        trading_pair,
+                    )
+                    return True
                 await asyncio.sleep(0.5)
                 waited += 0.5
 
-            return True
+            logger.error(
+                "Order book tracker for %s did not become ready within %.1fs",
+                connector_name,
+                max_wait,
+            )
+            try:
+                await connector.stop_network()
+            except Exception:
+                logger.debug("Could not stop timed-out data connector %s", connector_name, exc_info=True)
+            self._data_connectors_started.pop(connector_name, None)
+            return False
 
         except Exception as e:
             logger.error(f"Error starting data connector {connector_name}: {e}")
@@ -415,7 +439,9 @@ class UnifiedConnectorService:
                 bids, asks = ob.snapshot
                 if len(bids) > 0 and len(asks) > 0:
                     logger.info(f"Order book for {trading_pair} already initialized")
-                    return True
+                    return self._ensure_paper_trade_market_ready(
+                        connector_name, connector
+                    )
             except Exception:
                 pass
 
@@ -426,6 +452,29 @@ class UnifiedConnectorService:
                 f"refusing to register it (check the quote asset)"
             )
             return False
+
+        # PaperTradeExchange shares its tracker with the keyless data connector.
+        # Start that base connector so its exchange symbol map, REST snapshot and
+        # WebSocket subscription are initialized through the supported lifecycle.
+        if connector_name.endswith("_paper_trade"):
+            data_connector = self.get_data_connector(connector_name)
+            if not self._data_connectors_started.get(connector_name, False):
+                success = await self.ensure_data_connector_started(
+                    connector_name, trading_pair
+                )
+                if not success:
+                    return False
+            elif trading_pair not in data_connector.order_book_tracker.order_books:
+                success = await data_connector.add_trading_pair(trading_pair)
+                if not success:
+                    return False
+            if not await self._wait_for_order_book(
+                data_connector.order_book_tracker, trading_pair, timeout
+            ):
+                return False
+            return self._ensure_paper_trade_market_ready(
+                connector_name, connector
+            )
 
         # For data connectors, ensure network is started
         if connector_name in self._data_connectors:
@@ -451,8 +500,34 @@ class UnifiedConnectorService:
             if not success:
                 return False
 
-        # Wait for order book to have data
-        return await self._wait_for_order_book(tracker, trading_pair, timeout)
+        # PaperTradeExchange lazily constructs its simulated market from the
+        # now-ready base-exchange order book. Touch its readiness property only
+        # after the tracker has a valid snapshot.
+        if not await self._wait_for_order_book(tracker, trading_pair, timeout):
+            return False
+        return self._ensure_paper_trade_market_ready(connector_name, connector)
+
+    def _ensure_paper_trade_market_ready(
+        self, connector_name: str, connector
+    ) -> bool:
+        if not connector_name.endswith("_paper_trade"):
+            return True
+        try:
+            if not connector.ready:
+                logger.error(
+                    "Native paper market for %s did not become ready",
+                    connector_name,
+                )
+                return False
+            return True
+        except Exception as e:
+            logger.error(
+                "Native paper market initialization failed for %s: %s",
+                connector_name,
+                e,
+                exc_info=True,
+            )
+            return False
 
     def _is_tracker_running(self, tracker) -> bool:
         """Check if the order book tracker is running."""
@@ -675,18 +750,23 @@ class UnifiedConnectorService:
     ) -> ConnectorBase:
         """Create and fully initialize a trading connector."""
         # Authenticate and create connector
+        require_paper_trade_connector(connector_name)
         connector = self._create_trading_connector(account_name, connector_name)
 
-        # Initialize symbol map and trading rules
-        await connector._initialize_trading_pair_symbol_map()
-        await connector._update_trading_rules()
-        await connector._update_balances()
+        is_paper_trade = connector_name.endswith("_paper_trade")
 
-        # Perpetual-specific setup
-        if self._is_perpetual_connector(connector):
-            if PositionMode.HEDGE in connector.supported_position_modes():
-                connector.set_position_mode(PositionMode.HEDGE)
-            await connector._update_positions()
+        if not is_paper_trade:
+            # Live ExchangePyBase connectors own these exchange lifecycle calls.
+            # Hummingbot's PaperTradeExchange is an ExchangeBase wrapper: its
+            # order-book tracker and simulated balances are managed separately.
+            await connector._initialize_trading_pair_symbol_map()
+            await connector._update_trading_rules()
+            await connector._update_balances()
+
+            if self._is_perpetual_connector(connector):
+                if PositionMode.HEDGE in connector.supported_position_modes():
+                    connector.set_position_mode(PositionMode.HEDGE)
+                await connector._update_positions()
 
         # Load existing orders from database
         if self.db_manager:
@@ -709,17 +789,24 @@ class UnifiedConnectorService:
         # Initialize metrics
         self._initialize_metrics(connector, account_name, connector_name, cache_key)
 
-        # Start network tasks
-        await self._start_connector_network(connector)
+        # ExchangePyBase owns polling/user-stream lifecycle. The native paper
+        # adapter starts its base exchange order-book tracker lazily when the
+        # first pair is registered by initialize_order_book().
+        if not is_paper_trade:
+            await self._start_connector_network(connector)
 
-        # Only update order status for orders loaded from DB (balances, rules, positions
-        # were already fetched above — no need to repeat via _update_connector_state)
-        if connector.in_flight_orders:
-            try:
-                connector._set_current_timestamp(time.time())
-                await connector._update_order_status()
-            except Exception as e:
-                logger.error(f"Error updating initial order status for {connector_name}: {e}")
+            # Only update order status for orders loaded from DB (balances, rules,
+            # positions were already fetched above — no need to repeat state refresh).
+            if connector.in_flight_orders:
+                try:
+                    connector._set_current_timestamp(time.time())
+                    await connector._update_order_status()
+                except Exception as e:
+                    logger.error(
+                        "Error updating initial order status for %s: %s",
+                        connector_name,
+                        e,
+                    )
 
         logger.info(f"Initialized trading connector {connector_name} for {account_name}")
         return connector
@@ -740,6 +827,8 @@ class UnifiedConnectorService:
             secrets_manager=self.secrets_manager
         )
 
+        require_paper_trade_connector(connector_name)
+
         # Check if this is a Gateway network connector
         # Gateway connectors are NOT in AllConnectorSettings (those are exchange connectors)
         # Network format: "chain-network" (e.g., "solana-mainnet-beta", "ethereum-mainnet")
@@ -750,6 +839,60 @@ class UnifiedConnectorService:
                 trading_pairs=[],
                 trading_required=True,
             )
+
+        if connector_name.endswith("_paper_trade"):
+            # Hummingbot paper connectors are wrappers around the real exchange's
+            # public order-book tracker; there is no kraken_paper_trade Python module.
+            base_connector_name = connector_name.removesuffix("_paper_trade")
+            if base_connector_name not in self._conn_settings:
+                raise UnknownConnectorError(
+                    f"Base exchange connector {base_connector_name} is not installed"
+                )
+
+            from hummingbot.connector.exchange.paper_trade.paper_trade_exchange import (
+                PaperTradeExchange,
+            )
+
+            # Share the exact keyless public-data connector's tracker with the
+            # PaperTradeExchange wrapper. Hummingbot's factory creates a second
+            # tracker from a throwaway non-trading connector; that tracker has no
+            # managed network lifecycle here and never receives a usable snapshot.
+            # The shared tracker is still public-data-only, while all simulated
+            # orders and balances remain inside PaperTradeExchange.
+            data_connector = self.get_data_connector(connector_name)
+            connector = PaperTradeExchange(
+                data_connector.order_book_tracker,
+                get_connector_class(base_connector_name),
+                exchange_name=base_connector_name,
+            )
+
+            # Match Hummingbot's native ConnectorManager behavior: simulated
+            # balances come from the account's conf_client.yml paper_trade section.
+            try:
+                account_config = fs_util.read_yaml_file(
+                    "credentials/master_account/conf_client.yml"
+                )
+            except FileNotFoundError:
+                account_config = {}
+                logger.warning(
+                    "No conf_client.yml found; Kraken paper connector will start "
+                    "without configured simulated balances"
+                )
+            paper_config = account_config.get("paper_trade", {})
+            balances = paper_config.get("paper_trade_account_balance", {})
+            if not isinstance(balances, dict):
+                raise RuntimeError(
+                    "paper_trade_account_balance must be a mapping in conf_client.yml"
+                )
+            for asset, balance in balances.items():
+                connector.set_balance(asset, balance)
+
+            logger.info(
+                "Created native Hummingbot paper connector %s using base exchange %s",
+                connector_name,
+                base_connector_name,
+            )
+            return connector
 
         conn_setting = self._conn_settings[connector_name]
         keys = BackendAPISecurity.api_keys(connector_name)
@@ -765,13 +908,36 @@ class UnifiedConnectorService:
 
     def _create_data_connector(self, connector_name: str) -> ConnectorBase:
         """Create a non-authenticated data connector."""
-        conn_setting = self._conn_settings.get(connector_name)
+        require_paper_trade_connector(connector_name)
+        # A paper-trade name is a Hummingbot wrapper identity, not a Python
+        # exchange module. Public market-data connectors must use the base exchange.
+        base_connector_name = (
+            connector_name.removesuffix("_paper_trade")
+            if connector_name.endswith("_paper_trade")
+            else connector_name
+        )
+        conn_setting = self._conn_settings.get(base_connector_name)
         if not conn_setting:
-            raise UnknownConnectorError(f"Connector {connector_name} not found")
+            raise UnknownConnectorError(
+                f"Connector {base_connector_name} not found"
+            )
 
-        # Get config keys but don't use real API keys
-        connector_config = AllConnectorSettings.get_connector_config_keys(connector_name)
-        if getattr(connector_config, "use_auth_for_public_endpoints", False):
+        # Paper data connectors are strictly public-market-data adapters.
+        # Never load saved exchange credentials into the paper-only runtime.
+        connector_config = AllConnectorSettings.get_connector_config_keys(
+            base_connector_name
+        )
+        if connector_name.endswith("_paper_trade"):
+            api_keys = (
+                {
+                    key: ""
+                    for key in connector_config.__class__.model_fields.keys()
+                    if key != "connector"
+                }
+                if connector_config is not None
+                else {}
+            )
+        elif getattr(connector_config, "use_auth_for_public_endpoints", False):
             api_keys = api_keys_from_connector_config_map(
                 ClientConfigAdapter(connector_config)
             )
@@ -790,7 +956,7 @@ class UnifiedConnectorService:
             api_keys=api_keys,
         )
 
-        connector_class = get_connector_class(connector_name)
+        connector_class = get_connector_class(base_connector_name)
         connector = connector_class(**init_params)
 
         logger.info(f"Created data connector: {connector_name}")
@@ -890,6 +1056,11 @@ class UnifiedConnectorService:
         already handles that.
         """
         try:
+            # PaperTradeExchange updates its simulated balances internally as
+            # paper fills occur. It has no ExchangePyBase _update_balances API.
+            if connector_name.endswith("_paper_trade"):
+                return
+
             connector._set_current_timestamp(time.time())
             await connector._update_balances()
 
@@ -1357,7 +1528,15 @@ class UnifiedConnectorService:
         """List connector credentials available for an account."""
         try:
             files = fs_util.list_files(f"credentials/{account_name}/connectors")
-            return [f.replace(".yml", "") for f in files if f.endswith(".yml")]
+            connector_names = [
+                f.replace(".yml", "") for f in files if f.endswith(".yml")
+            ]
+            if paper_only_enabled():
+                connector_names = [
+                    name for name in connector_names
+                    if is_paper_trade_connector_name(name)
+                ]
+            return connector_names
         except FileNotFoundError:
             return []
 

@@ -34,7 +34,7 @@ jobs:
           cache-dependency-path: .github/workflows/spectra-api.yml
 
       - name: Install focused test dependency
-        run: python -m pip install pytest
+        run: python -m pip install pytest cryptography
 
       - name: Compile exact-accounting sources
         run: |
@@ -44,7 +44,15 @@ jobs:
             utils/executor_trade_provenance.py \
             models/executors.py \
             routers/executors.py \
-            services/executor_service.py
+            services/executor_service.py \
+            utils/spectra_paper_guard.py \
+            services/unified_connector_service.py \
+            services/market_data_service.py \
+            services/executor_service.py \
+            routers/connectors.py \
+            routers/portfolio.py \
+            routers/accounts.py \
+            main.py
 
       - name: Run dependency-light Spectra accounting contract
         run: |
@@ -52,4 +60,272 @@ jobs:
             test/test_exact_position_hold_accounting_contract.py \
             test/test_exact_position_hold_accounting_wiring.py \
             test/test_executor_order_provenance_contract.py \
-            test/test_executor_trade_provenance_contract.py
+            test/test_executor_trade_provenance_contract.py \
+            test/test_spectra_paper_guard.py \
+            test/test_spectra_paper_connector_service.py \
+            test/test_core_compatibility.py \
+            test/test_spectra_dispatch_receipt.py
+
+  build-paper-api-image:
+    name: Build Spectra paper API container
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Build the exact alpha API image
+        run: docker build --pull --progress=plain -t localhost/spectra-finance/hummingbot-api:local -f Dockerfile .
+      - name: Checkout matching Spectra Core alpha helpers
+        uses: actions/checkout@v4
+        with:
+          repository: andredepaulnash-cmd/spectra-finance-core
+          ref: alpha/one-command-paper-demo-20261108
+          path: spectra-core
+      - name: Prepare paper-only runtime configuration
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check pyyaml cryptography
+          API_USER=spectra_alpha
+          API_PASS="$(python -c 'import secrets; print(secrets.token_hex(24))')"
+          CONFIG_PASS="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+          BROKER_USER="spectra_ci"
+          BROKER_PASS="$(python -c 'import secrets; print(secrets.token_hex(24))')"
+          BROKER_DASH_PASS="$(python -c 'import secrets; print(secrets.token_hex(24))')"
+          cat > .env <<EOF
+          API_BIND=127.0.0.1
+          DB_BIND=127.0.0.1
+          USERNAME=$API_USER
+          PASSWORD=$API_PASS
+          CONFIG_PASSWORD=$CONFIG_PASS
+          BROKER_USERNAME=$BROKER_USER
+          BROKER_PASSWORD=$BROKER_PASS
+          BROKER_DASHBOARD_PASSWORD=$BROKER_DASH_PASS
+          SPECTRA_PAPER_ONLY=true
+          SPECTRA_PAPER_CONNECTORS=kraken_paper_trade
+          SPECTRA_ALLOW_LIVE_EXECUTION=false
+          SPECTRA_REQUIRE_CORE_RECEIPTS=true
+          SPECTRA_DISPATCH_POLICY_VERSION=spectra-policy-v1
+          EOF
+          mkdir -p .emqx bots/credentials/master_account
+          chmod 600 .env
+          printf 'user_id,password,is_superuser\n%s,%s,false\n' "$BROKER_USER" "$BROKER_PASS" > .emqx/auth-bootstrap.csv
+          chmod 700 .emqx
+          chmod 644 .emqx/auth-bootstrap.csv
+          python spectra-core/scripts/configure_alpha_paper_connector.py --config bots/credentials/master_account/conf_client.yml
+          cat > "$RUNNER_TEMP/spectra-core.env" <<'EOF'
+          SPECTRA_PAPER_ONLY=true
+          SPECTRA_ALLOW_LIVE_EXECUTION=false
+          SPECTRA_DISPATCH_POLICY_VERSION=spectra-policy-v1
+          EOF
+          python spectra-core/scripts/generate_spectra_dispatch_keys.py --core-env "$RUNNER_TEMP/spectra-core.env" --api-env .env
+          chmod 600 .env
+      - name: Generate and validate isolated paper Compose file
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - docker-compose.yml docker-compose.alpha-ci.yml <<'PYCOMPOSE'
+          from pathlib import Path
+          import sys
+
+          source, target = map(Path, sys.argv[1:3])
+          lines = source.read_text(encoding="utf-8").splitlines()
+          output = []
+          in_postgres = False
+          skip_extra_hosts = False
+          skip_postgres_ports = False
+          for line in lines:
+              if line == "  postgres:":
+                  in_postgres = True
+              if skip_extra_hosts:
+                  if line.startswith("    ") and not line.startswith("      "):
+                      skip_extra_hosts = False
+                  else:
+                      continue
+              if skip_postgres_ports:
+                  if line.startswith("    ") and not line.startswith("      "):
+                      skip_postgres_ports = False
+                  else:
+                      continue
+              if line == "    extra_hosts:":
+                  skip_extra_hosts = True
+                  continue
+              if in_postgres and line == "    ports:":
+                  skip_postgres_ports = True
+                  continue
+              if "/var/run/docker.sock:/var/run/docker.sock" in line:
+                  continue
+              if "host.docker.internal" in line or "host-gateway" in line:
+                  continue
+              output.append(line)
+
+          text = "\n".join(output) + "\n"
+          replacements = {
+              "container_name: hummingbot-api": "container_name: spectra-ci-hummingbot-api",
+              "container_name: hummingbot-broker": "container_name: spectra-ci-hummingbot-broker",
+              "container_name: hummingbot-postgres": "container_name: spectra-ci-hummingbot-postgres",
+              "image: docker.io/emqx/emqx:5": "image: docker.io/emqx/emqx:5.10.5",
+              "image: emqx/emqx:5": "image: docker.io/emqx/emqx:5.10.5",
+              "image: postgres:": "image: docker.io/library/postgres:",
+          }
+          for old, new in replacements.items():
+              text = text.replace(old, new)
+          if any(token in text for token in ("docker.sock", "host.docker.internal", "host-gateway")):
+              raise SystemExit("Unsafe host socket/gateway reference remains in CI Compose file.")
+          pg = text.split("  postgres:\n", 1)[1].split("\nnetworks:\n", 1)[0]
+          if "    ports:\n" in pg:
+              raise SystemExit("Postgres host port was not removed.")
+          target.write_text(text, encoding="utf-8")
+          PYCOMPOSE
+          docker compose -p spectra-ci -f docker-compose.alpha-ci.yml config -q
+
+      - name: Start isolated paper API containers
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker compose -p spectra-ci -f docker-compose.alpha-ci.yml up -d || {
+            docker compose -p spectra-ci -f docker-compose.alpha-ci.yml ps -a || true
+            docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --tail=200 || true
+            exit 1
+          }
+          API_PASS="$(python -c 'from pathlib import Path; print(next(x.split("=",1)[1] for x in Path(".env").read_text().splitlines() if x.startswith("PASSWORD=")))')"
+          echo "API_AUTH=spectra_alpha:$API_PASS" >> "$GITHUB_ENV"
+      - name: Wait for authenticated paper API
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for attempt in $(seq 1 180); do
+            curl -fsS -u "$API_AUTH" http://127.0.0.1:8000/openapi.json >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          docker compose -p spectra-ci -f docker-compose.alpha-ci.yml ps -a || true
+          docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --tail=200 || true
+          exit 1
+
+      - name: Run native paper connector lifecycle regressions
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker cp test/. spectra-ci-hummingbot-api:/hummingbot-api/test/
+          docker exec spectra-ci-hummingbot-api pytest -q /hummingbot-api/test/test_spectra_paper_connector_service.py /hummingbot-api/test/test_ticker_sources.py /hummingbot-api/test/test_spectra_paper_market_prices.py
+
+      - name: Verify Kraken paper connector runtime
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for attempt in $(seq 1 180); do
+            if curl -fsS -u "$API_AUTH" http://127.0.0.1:8000/spectra/runtime > "$RUNNER_TEMP/spectra-runtime.json"; then
+              if python -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if any(n.endswith("/kraken_paper_trade") for n in d.get("paper_connectors", [])) else 1)' "$RUNNER_TEMP/spectra-runtime.json"; then
+                break
+              fi
+            fi
+            sleep 2
+          done
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          runtime = json.loads(Path(os.environ["RUNNER_TEMP"] + "/spectra-runtime.json").read_text())
+          assert runtime["mode"] == "PAPER_ONLY", runtime
+          assert runtime["paper_only"] is True, runtime
+          assert runtime["paper_connectors_only"] is True, runtime
+          assert runtime["paper_connector_count"] >= 1, runtime
+          assert any(name.endswith("/kraken_paper_trade") for name in runtime["paper_connectors"]), runtime
+          assert runtime["live_dispatch_available"] is False, runtime
+          print("Verified: Kraken paper connector initialized; live dispatch is unavailable.")
+          PY
+
+      - name: Verify public Kraken BTC-USD trading rules
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fsS -u "$API_AUTH" "http://127.0.0.1:8000/connectors/kraken_paper_trade/trading-rules?trading_pairs=BTC-USD" > "$RUNNER_TEMP/kraken-paper-rules.json"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          rules = json.loads(Path(os.environ["RUNNER_TEMP"] + "/kraken-paper-rules.json").read_text())
+          assert "BTC-USD" in rules, rules
+          assert rules["BTC-USD"]["min_order_size"] > 0, rules
+          assert rules["BTC-USD"]["supports_limit_orders"] is True, rules
+          print("Verified: public BTC-USD trading rules are available to the paper connector.")
+          PY
+
+      - name: Request Kraken paper BTC-USD pair initialization
+        id: pair_init
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          status="$(curl -sS -u "$API_AUTH" -H "Content-Type: application/json" \
+            -d '{"connector_name":"kraken_paper_trade","trading_pair":"BTC-USD","account_name":"master_account","timeout":30}' \
+            -o "$RUNNER_TEMP/kraken-paper-pair.json" -w '%{http_code}' \
+            http://127.0.0.1:8000/market-data/trading-pair/add || true)"
+          summary="$(python -c 'import json,sys; from pathlib import Path; p=Path(sys.argv[1]); d=json.loads(p.read_text()) if p.exists() else {}; print(str(d.get("message") or d.get("detail") or d.get("error") or d.get("success"))[:140].replace("\\n"," "))' "$RUNNER_TEMP/kraken-paper-pair.json")"
+          echo "http=$status" >> "$GITHUB_OUTPUT"
+          echo "summary=$summary" >> "$GITHUB_OUTPUT"
+          echo "Pair initialization HTTP $status: $summary" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$status" != "200" ]]; then
+            {
+              echo "### Paper API container logs at pair initialization failure"
+              docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --tail=140 || true
+            } >> "$GITHUB_STEP_SUMMARY" 2>&1
+          fi
+
+      - name: "Validate Kraken paper pair initialization (HTTP ${{ steps.pair_init.outputs.http }}: ${{ steps.pair_init.outputs.summary }})"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "${{ steps.pair_init.outputs.http }}" = "200"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          result = json.loads(Path(os.environ["RUNNER_TEMP"] + "/kraken-paper-pair.json").read_text())
+          assert result.get("success") is True, result
+          PY
+      - name: Verify Kraken paper order book and capture public-price response
+        id: prices
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fsS -u "$API_AUTH" -H "Content-Type: application/json" \
+            -d '{"connector_name":"kraken_paper_trade","trading_pair":"BTC-USD","depth":5}' \
+            http://127.0.0.1:8000/market-data/order-book > "$RUNNER_TEMP/kraken-paper-book.json"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          book = json.loads(Path(os.environ["RUNNER_TEMP"] + "/kraken-paper-book.json").read_text())
+          assert book["trading_pair"] == "BTC-USD", book
+          assert book["bids"] and book["asks"], book
+          print("Verified: paper adapter exposes public BTC-USD bid/ask data.")
+          PY
+          status="$(curl -sS -u "$API_AUTH" -H "Content-Type: application/json" \
+            -d '{"connector_name":"kraken_paper_trade","trading_pairs":["BTC-USD"]}' \
+            -o "$RUNNER_TEMP/kraken-paper-prices.json" -w '%{http_code}' \
+            http://127.0.0.1:8000/market-data/prices || true)"
+          summary="$(python -c 'import json,sys; from pathlib import Path; p=Path(sys.argv[1]); d=json.loads(p.read_text()) if p.exists() else {}; print(str(d.get("detail") or d.get("error") or d.get("prices") or d.get("success"))[:140].replace(chr(10)," "))' "$RUNNER_TEMP/kraken-paper-prices.json")"
+          echo "http=$status" >> "$GITHUB_OUTPUT"
+          echo "summary=$summary" >> "$GITHUB_OUTPUT"
+          echo "Public price response HTTP $status: $summary" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$status" != "200" ]]; then
+            {
+              echo "### Paper API container logs at public-price failure"
+              docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --tail=140 || true
+            } >> "$GITHUB_STEP_SUMMARY" 2>&1
+          fi
+
+      - name: "Validate public Kraken prices (HTTP ${{ steps.prices.outputs.http }}: ${{ steps.prices.outputs.summary }})"
+        id: validate_prices
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "${{ steps.prices.outputs.http }}" = "200"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          result = json.loads(Path(os.environ["RUNNER_TEMP"] + "/kraken-paper-prices.json").read_text())
+          assert result.get("connector") == "kraken_paper_trade", result
+          assert result.get("prices", {}).get("BTC-USD", 0) > 0, result
+          print("Verified: paper price reads use the keyless public ticker adapter.")
+          PY
+          grep -q 'SPECTRA_PAPER_ONLY=true' .env
+          grep -q 'SPECTRA_ALLOW_LIVE_EXECUTION=false' .env
+      - name: Stop paper-only API stack
+        if: always()
+        run: docker compose -p spectra-ci -f docker-compose.alpha-ci.yml down -v || true

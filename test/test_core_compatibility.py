@@ -11,14 +11,12 @@ from types import SimpleNamespace
 
 import pytest
 
-pytest.importorskip("hummingbot")
-
-from utils.core_compatibility import REQUIRED_CORE_SURFACE, require_core_surface  # noqa: E402
+from utils import core_compatibility
 
 
-def test_the_installed_core_carries_everything_this_api_reads():
-    """Guards the real dependency: fails if the environment resolves an old core."""
-    require_core_surface()
+def test_the_pinned_core_version_is_accepted(monkeypatch):
+    monkeypatch.setattr(core_compatibility, "version", lambda name: "20260922")
+    core_compatibility.require_core_surface()
 
 
 def test_the_list_is_empty_because_nothing_extra_is_required_right_now():
@@ -30,18 +28,20 @@ def test_the_list_is_empty_because_nothing_extra_is_required_right_now():
     to require. An empty list is the honest state, and require_core_surface() passing
     trivially is the point: no patched core needed to boot.
     """
-    assert list(REQUIRED_CORE_SURFACE) == []
+    assert list(core_compatibility.REQUIRED_CORE_SURFACE) == []
 
 
 def test_a_missing_field_is_a_startup_error_naming_it(monkeypatch):
     """The whole point: loud, and specific enough to act on."""
+    monkeypatch.setattr(core_compatibility, "version", lambda name: "20260922")
+    monkeypatch.setattr(core_compatibility, "_resolve", lambda path: SimpleNamespace())
     monkeypatch.setattr(
-        "utils.core_compatibility.REQUIRED_CORE_SURFACE",
+        core_compatibility, "REQUIRED_CORE_SURFACE",
         [("hummingbot.strategy_v2.models.executors_info:ExecutorInfo", "not_a_field", "a field from the future")],
     )
 
     with pytest.raises(RuntimeError) as excinfo:
-        require_core_surface()
+        core_compatibility.require_core_surface()
 
     message = str(excinfo.value)
     assert "not_a_field" in message
@@ -49,19 +49,21 @@ def test_a_missing_field_is_a_startup_error_naming_it(monkeypatch):
 
 
 def test_an_unimportable_target_is_reported_rather_than_raised_raw(monkeypatch):
+    monkeypatch.setattr(core_compatibility, "version", lambda name: "20260922")
     monkeypatch.setattr(
-        "utils.core_compatibility.REQUIRED_CORE_SURFACE",
+        core_compatibility, "REQUIRED_CORE_SURFACE",
         [("hummingbot.strategy_v2.models.nope:Gone", "anything", "a module that is not there")],
     )
 
     with pytest.raises(RuntimeError) as excinfo:
-        require_core_surface()
+        core_compatibility.require_core_surface()
 
     assert "could not be imported" in str(excinfo.value)
 
 
 def test_a_plain_class_is_checked_by_attribute_not_model_fields(monkeypatch):
     """ExecutorBase is not a pydantic model, so `model_fields` must not be assumed."""
+    monkeypatch.setattr(core_compatibility, "version", lambda name: "20260922")
     monkeypatch.setattr(
         "utils.core_compatibility._resolve",
         lambda path: SimpleNamespace(volume_traded_quote=property(lambda self: None)),
@@ -71,4 +73,20 @@ def test_a_plain_class_is_checked_by_attribute_not_model_fields(monkeypatch):
         [("anything:AtAll", "volume_traded_quote", "present as an attribute")],
     )
 
-    require_core_surface()
+    core_compatibility.require_core_surface()
+
+
+@pytest.mark.parametrize("installed", ["20260920", "20260922.post1", "2.17.0"])
+def test_unreviewed_core_version_fails_startup(monkeypatch, installed):
+    monkeypatch.setattr(core_compatibility, "version", lambda name: installed)
+    with pytest.raises(RuntimeError, match="Unsupported Hummingbot core version"):
+        core_compatibility.require_core_surface()
+
+
+def test_missing_core_package_fails_startup(monkeypatch):
+    def missing(_name):
+        raise core_compatibility.PackageNotFoundError("hummingbot")
+
+    monkeypatch.setattr(core_compatibility, "version", missing)
+    with pytest.raises(RuntimeError, match="is not installed"):
+        core_compatibility.require_core_surface()

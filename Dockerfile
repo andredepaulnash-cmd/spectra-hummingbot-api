@@ -1,5 +1,5 @@
 # Stage 1: Builder stage
-FROM continuumio/miniconda3 AS builder
+FROM docker.io/continuumio/miniconda3:latest AS builder
 
 # Install build dependencies
 RUN apt-get update && \
@@ -18,7 +18,7 @@ RUN conda env create -f environment.yml && \
     rm -rf /root/.cache/pip/*
 
 # Stage 2: Runtime stage
-FROM continuumio/miniconda3
+FROM docker.io/continuumio/miniconda3:latest
 
 # Install only runtime dependencies
 RUN apt-get update && \

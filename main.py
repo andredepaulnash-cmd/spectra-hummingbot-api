@@ -1,4 +1,5 @@
 import logging
+import os
 import secrets
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -12,6 +13,16 @@ from hummingbot.client.config import config_helpers
 
 # Load environment variables early
 load_dotenv()
+
+from utils.spectra_paper_guard import (  # noqa: E402
+    configured_paper_connectors,
+    paper_only_enabled,
+    should_block_paper_mutation,
+)
+
+# Use the same fail-closed policy as connector creation. Missing configuration
+# means paper-only; leaving paper mode requires the separate live authorization.
+SPECTRA_PAPER_ONLY = paper_only_enabled()
 
 VERSION = "1.0.1"
 
@@ -36,6 +47,7 @@ from fastapi.responses import JSONResponse  # noqa: E402
 from fastapi.security import HTTPBasic, HTTPBasicCredentials  # noqa: E402
 from hummingbot.client.config.client_config_map import GatewayConfigMap  # noqa: E402
 from hummingbot.client.config.config_crypt import ETHKeyFileSecretManger  # noqa: E402
+from hummingbot.client.settings import AllConnectorSettings  # noqa: E402
 from hummingbot.core.gateway.gateway_http_client import GatewayHttpClient  # noqa: E402
 
 from config import settings, warn_if_insecure_security_defaults  # noqa: E402
@@ -79,6 +91,7 @@ from services.unified_connector_service import UnifiedConnectorService  # noqa: 
 from services.websocket_manager import WebSocketManager  # noqa: E402
 from utils.bot_archiver import BotArchiver  # noqa: E402
 from utils.core_compatibility import require_core_surface  # noqa: E402
+from utils.spectra_dispatch_receipt import SpectraDispatchReceiptMiddleware  # noqa: E402
 from utils.security import BackendAPISecurity  # noqa: E402
 
 # Set up logging configuration
@@ -191,7 +204,27 @@ async def lifespan(app: FastAPI):
         logging.warning(f"Error reading conf_client.yml: {e}, defaulting global quote token to USDT")
 
     # =========================================================================
-    # 2. UnifiedConnectorService - Single source of truth for all connectors
+    # 2. Register Hummingbot's native paper-trade connector classes
+    # =========================================================================
+
+    if SPECTRA_PAPER_ONLY:
+        configured_names = configured_paper_connectors()
+        base_names = [name.removesuffix("_paper_trade") for name in configured_names]
+        connector_settings = AllConnectorSettings.get_connector_settings()
+        unknown_names = [name for name in base_names if name not in connector_settings]
+        if unknown_names:
+            raise RuntimeError(
+                "Configured paper connectors are not installed in this Hummingbot "
+                f"build: {', '.join(unknown_names)}"
+            )
+        AllConnectorSettings.initialize_paper_trade_settings(base_names)
+        logging.info(
+            "Registered native Hummingbot paper connectors: %s",
+            ", ".join(configured_names) or "(none)",
+        )
+
+    # =========================================================================
+    # 3. UnifiedConnectorService - Single source of truth for all connectors
     # =========================================================================
 
     connector_service = UnifiedConnectorService(
@@ -267,43 +300,54 @@ async def lifespan(app: FastAPI):
     # 5. Other Services
     # =========================================================================
 
-    bots_orchestrator = BotsOrchestrator(
-        broker_host=settings.broker.host,
-        broker_port=settings.broker.port,
-        broker_username=settings.broker.username,
-        broker_password=settings.broker.password,
-        db_manager=db_manager,
-        performance_dump_interval=settings.broker.performance_dump_interval
-    )
+    # BotsOrchestrator constructs a Docker SDK client immediately. Do not even
+    # instantiate it in Spectra paper mode: the alpha container intentionally has
+    # no host Docker/Podman socket, and paper mode never starts bot/MQTT orchestration.
+    bots_orchestrator = None
+    if not SPECTRA_PAPER_ONLY:
+        bots_orchestrator = BotsOrchestrator(
+            broker_host=settings.broker.host,
+            broker_port=settings.broker.port,
+            broker_username=settings.broker.username,
+            broker_password=settings.broker.password,
+            db_manager=db_manager,
+            performance_dump_interval=settings.broker.performance_dump_interval
+        )
+    else:
+        logging.info("SPECTRA_PAPER_ONLY=true: BotsOrchestrator not constructed")
 
     backtesting_service = BacktestingService()
-    docker_service = DockerService()
-    gateway_service = GatewayService()
-    # If a secured Gateway is already running but this API lost the shared mTLS certs (e.g. the
-    # API container was recreated without the persisted bots/ mount), regenerate the cert set and
-    # restart the Gateway so it loads a matching server cert. Non-fatal: the API must still boot
-    # even when Docker is unavailable or the Gateway is simply not running.
-    if gateway_use_ssl:
-        try:
-            reconcile = gateway_service.reconcile_certs()
-            if reconcile.get("action") != "none":
-                logging.info(f"Gateway cert reconciliation: {reconcile.get('message')}")
-        except Exception as e:
-            logging.warning(f"Gateway cert reconciliation skipped: {e}")
+    # Neither service is constructed in paper mode: both wrap host Docker access.
+    # The alpha Compose file intentionally has no Docker socket mount.
+    docker_service = None if SPECTRA_PAPER_ONLY else DockerService()
+    gateway_service = None if SPECTRA_PAPER_ONLY else GatewayService()
+    if SPECTRA_PAPER_ONLY:
+        logging.info("SPECTRA_PAPER_ONLY=true: Docker and Gateway services not constructed")
+    if not SPECTRA_PAPER_ONLY:
+        # If a secured Gateway is already running but this API lost the shared mTLS certs (e.g. the
+        # API container was recreated without the persisted bots/ mount), regenerate the cert set and
+        # restart the Gateway so it loads a matching server cert. Non-fatal: the API must still boot
+        # even when Docker is unavailable or the Gateway is simply not running.
+        if gateway_use_ssl:
+            try:
+                reconcile = gateway_service.reconcile_certs()
+                if reconcile.get("action") != "none":
+                    logging.info(f"Gateway cert reconciliation: {reconcile.get('message')}")
+            except Exception as e:
+                logging.warning(f"Gateway cert reconciliation skipped: {e}")
 
-    # Start the Gateway status monitor only when there is a Gateway to poll. Gating on the
-    # container itself (rather than on cert presence, which is now always true) keeps the 2s
-    # poll loop from spamming errors for the many deployments that never run a Gateway.
-    # Plain-HTTP setups may point at a Gateway this API doesn't manage, so keep polling there.
-    try:
-        gateway_is_running = gateway_service.is_running()
-    except Exception as e:
-        logging.warning(f"Could not determine Gateway container state: {e}")
-        gateway_is_running = False
-    if not gateway_use_ssl or gateway_is_running:
-        GatewayHttpClient.get_instance().start_monitor()
+        # Start the Gateway status monitor only when there is a Gateway to poll.
+        try:
+            gateway_is_running = gateway_service.is_running()
+        except Exception as e:
+            logging.warning(f"Could not determine Gateway container state: {e}")
+            gateway_is_running = False
+        if not gateway_use_ssl or gateway_is_running:
+            GatewayHttpClient.get_instance().start_monitor()
+        else:
+            logging.info("Gateway container not running; status monitor deferred until it is started")
     else:
-        logging.info("Gateway container not running; status monitor deferred until it is started")
+        logging.warning("SPECTRA_PAPER_ONLY=true: Gateway integration and monitoring are disabled")
 
     bot_archiver = BotArchiver(
         settings.aws.api_key,
@@ -315,24 +359,53 @@ async def lifespan(app: FastAPI):
     # 6. Start services
     # =========================================================================
 
-    # Initialize all trading connectors FIRST (before any service that might use them)
-    # This ensures OrdersRecorder is properly attached before any concurrent access
-    logging.info("Initializing all trading connectors...")
-    await connector_service.initialize_all_trading_connectors()
+    if SPECTRA_PAPER_ONLY:
+        # The connector service independently permits only names ending in
+        # "_paper_trade". This lets Hummingbot's simulated exchange connector
+        # execute paper orders while preventing a live CEX or Gateway connector
+        # from being initialized or lazily created.
+        logging.warning(
+            "SPECTRA_PAPER_ONLY=true: initializing only Hummingbot paper-trade connectors"
+        )
+        await connector_service.initialize_all_trading_connectors()
+        # Paper connectors are keyless. Initialize the explicitly configured
+        # *_paper_trade connectors directly from conf_client.yml-backed settings;
+        # do not create fake exchange credential files or ask for API keys.
+        paper_connector_names = configured_paper_connectors()
+        if paper_connector_names:
+            account_names = accounts_service.list_accounts()
+            for account_name in account_names:
+                for connector_name in paper_connector_names:
+                    await connector_service.get_trading_connector(
+                        account_name, connector_name
+                    )
+            logging.info(
+                "Initialized configured paper connectors: %s",
+                ", ".join(paper_connector_names),
+            )
+        await connector_service.reconcile_active_orders()
 
-    # Reconcile persisted active orders against the exchange (e.g. after an API
-    # restart/crash that lost in-memory references). Confirmed-closed orders are
-    # marked terminal; still-open orders are re-tracked so they stay cancelable.
-    # Runs after connectors reload their persisted in-flight orders.
-    await connector_service.reconcile_active_orders()
+        # The executor control loop is safe only after connector-level paper
+        # enforcement is active. Do not start bots/MQTT, Gateway, Docker, or
+        # background market-data feeds; paper connectors own their public feed.
+        executor_service.start()
+        await executor_service.recover_positions_from_db()
+        accounts_service.start()
+    else:
+        # Initialize all trading connectors FIRST (before any service that might use them)
+        logging.info("Initializing all trading connectors...")
+        await connector_service.initialize_all_trading_connectors()
 
-    bots_orchestrator.start()
-    market_data_service.start()
-    await market_data_service.warmup_tickers()
-    executor_service.start()
-    await executor_service.cleanup_orphaned_executors()
-    await executor_service.recover_positions_from_db()
-    accounts_service.start()
+        # Reconcile persisted active orders against the exchange.
+        await connector_service.reconcile_active_orders()
+
+        bots_orchestrator.start()
+        market_data_service.start()
+        await market_data_service.warmup_tickers()
+        executor_service.start()
+        await executor_service.cleanup_orphaned_executors()
+        await executor_service.recover_positions_from_db()
+        accounts_service.start()
 
     # =========================================================================
     # 7. Store services in app state
@@ -373,13 +446,14 @@ async def lifespan(app: FastAPI):
 
     websocket_manager.shutdown()
     await executor_ws_manager.shutdown()
-    await bots_orchestrator.stop()
     await accounts_service.stop()
     await executor_service.stop()
-    market_data_service.stop()
     await connector_service.stop_all()
-    GatewayHttpClient.get_instance().stop_monitor()
-    docker_service.cleanup()
+    if not SPECTRA_PAPER_ONLY:
+        await bots_orchestrator.stop()
+        market_data_service.stop()
+        GatewayHttpClient.get_instance().stop_monitor()
+        docker_service.cleanup()
     await db_manager.close()
 
     logging.info("All services stopped")
@@ -408,6 +482,32 @@ app.add_middleware(
 # Compress responses for clients that send Accept-Encoding: gzip. These payloads are highly
 # repetitive JSON and compress ~14x; small responses are left alone via minimum_size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+# Execution/deployment writes require a short-lived, exact-scope receipt signed by Core.
+# Missing public-key configuration fails closed at the protected route boundary.
+app.add_middleware(
+    SpectraDispatchReceiptMiddleware,
+    username=settings.security.username,
+    password=settings.security.password,
+)
+
+
+@app.middleware("http")
+async def spectra_paper_only_guard(request: Request, call_next):
+    """Reject all non-query API mutations before any route/service dispatch."""
+    if SPECTRA_PAPER_ONLY and should_block_paper_mutation(
+        request.method, request.url.path
+    ):
+        return JSONResponse(
+            status_code=423,
+            content={
+                "detail": (
+                    "Spectra paper-only mode blocks this mutation. "
+                    "No exchange, executor, Gateway, bot, or Docker action was dispatched."
+                ),
+                "mode": "PAPER_ONLY",
+            },
+        )
+    return await call_next(request)
 
 
 @app.exception_handler(RequestValidationError)
@@ -460,6 +560,33 @@ def auth_user(
         )
 
     return credentials.username
+
+
+@app.get("/spectra/runtime")
+async def get_spectra_runtime(_username: str = Depends(auth_user)):
+    """Expose the effective runtime boundary to the local Spectra interface."""
+    connector_service = getattr(app.state, "connector_service", None)
+    paper_connectors = []
+    if SPECTRA_PAPER_ONLY and connector_service is not None:
+        paper_connectors = sorted(
+            f"{account_name}/{connector_name}"
+            for account_name, connectors in connector_service.get_all_trading_connectors().items()
+            for connector_name in connectors
+        )
+    return {
+        "product": "Spectra Finance",
+        "execution_adapter": "Hummingbot API",
+        "mode": "PAPER_ONLY" if SPECTRA_PAPER_ONLY else "LEGACY",
+        "paper_only": SPECTRA_PAPER_ONLY,
+        "mutation_guard": "ENABLED" if SPECTRA_PAPER_ONLY else "DISABLED",
+        "paper_connectors_only": SPECTRA_PAPER_ONLY,
+        "paper_connector_count": len(paper_connectors),
+        "paper_connectors": paper_connectors,
+        "live_exchange_connectors_started": not SPECTRA_PAPER_ONLY,
+        "executor_control_loop_started": True,
+        "bot_orchestration_started": not SPECTRA_PAPER_ONLY,
+        "live_dispatch_available": not SPECTRA_PAPER_ONLY,
+    }
 
 
 # Include all routers with authentication
