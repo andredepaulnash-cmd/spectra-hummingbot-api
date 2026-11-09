@@ -279,7 +279,8 @@ jobs:
           result = json.loads(Path(os.environ["RUNNER_TEMP"] + "/kraken-paper-pair.json").read_text())
           assert result.get("success") is True, result
           PY
-      - name: Verify Kraken paper order book and public prices
+      - name: Verify Kraken paper order book and capture public-price response
+        id: prices
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -294,15 +295,33 @@ jobs:
           assert book["bids"] and book["asks"], book
           print("Verified: paper adapter exposes public BTC-USD bid/ask data.")
           PY
-          curl -fsS -u "$API_AUTH" -H "Content-Type: application/json" \
+          status="$(curl -sS -u "$API_AUTH" -H "Content-Type: application/json" \
             -d '{"connector_name":"kraken_paper_trade","trading_pairs":["BTC-USD"]}' \
-            http://127.0.0.1:8000/market-data/prices > "$RUNNER_TEMP/kraken-paper-prices.json"
+            -o "$RUNNER_TEMP/kraken-paper-prices.json" -w '%{http_code}' \
+            http://127.0.0.1:8000/market-data/prices || true)"
+          summary="$(python -c 'import json,sys; from pathlib import Path; p=Path(sys.argv[1]); d=json.loads(p.read_text()) if p.exists() else {}; print(str(d.get("detail") or d.get("error") or d.get("prices") or d.get("success"))[:140].replace(chr(10)," "))' "$RUNNER_TEMP/kraken-paper-prices.json")"
+          echo "http=$status" >> "$GITHUB_OUTPUT"
+          echo "summary=$summary" >> "$GITHUB_OUTPUT"
+          echo "Public price response HTTP $status: $summary" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$status" != "200" ]]; then
+            {
+              echo "### Paper API container logs at public-price failure"
+              docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --tail=140 || true
+            } >> "$GITHUB_STEP_SUMMARY" 2>&1
+          fi
+
+      - name: "Validate public Kraken prices (HTTP ${{ steps.prices.outputs.http }}: ${{ steps.prices.outputs.summary }})"
+        id: validate_prices
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "${{ steps.prices.outputs.http }}" = "200"
           python - <<'PY'
           import json, os
           from pathlib import Path
           result = json.loads(Path(os.environ["RUNNER_TEMP"] + "/kraken-paper-prices.json").read_text())
-          assert result["connector"] == "kraken_paper_trade", result
-          assert result["prices"]["BTC-USD"] > 0, result
+          assert result.get("connector") == "kraken_paper_trade", result
+          assert result.get("prices", {}).get("BTC-USD", 0) > 0, result
           print("Verified: paper price reads use the keyless public ticker adapter.")
           PY
           grep -q 'SPECTRA_PAPER_ONLY=true' .env
