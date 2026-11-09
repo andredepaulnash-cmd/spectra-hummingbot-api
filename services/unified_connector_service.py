@@ -445,8 +445,20 @@ class UnifiedConnectorService:
             except Exception:
                 pass
 
-        # Reject pairs the exchange doesn't list before registering them anywhere
-        if not await self._is_trading_pair_supported(connector, trading_pair):
+        # PaperTradeExchange is a wrapper around the base exchange. Its shared
+        # order-book tracker belongs to the keyless public data connector, and
+        # symbol support must be checked against that same base connector rather
+        # than the wrapper's partially initialized symbol map.
+        is_paper_trade = connector_name.endswith("_paper_trade")
+        data_connector = (
+            self.get_data_connector(connector_name) if is_paper_trade else None
+        )
+        validation_connector = data_connector if is_paper_trade else connector
+
+        # Reject pairs the exchange doesn't list before registering them anywhere.
+        # For paper connectors this deliberately validates against the underlying
+        # public-data connector that owns the shared tracker and exchange symbol map.
+        if not await self._is_trading_pair_supported(validation_connector, trading_pair):
             logger.error(
                 f"Trading pair {trading_pair} is not listed on {connector_name} - "
                 f"refusing to register it (check the quote asset)"
@@ -456,8 +468,7 @@ class UnifiedConnectorService:
         # PaperTradeExchange shares its tracker with the keyless data connector.
         # Start that base connector so its exchange symbol map, REST snapshot and
         # WebSocket subscription are initialized through the supported lifecycle.
-        if connector_name.endswith("_paper_trade"):
-            data_connector = self.get_data_connector(connector_name)
+        if is_paper_trade:
             if not self._data_connectors_started.get(connector_name, False):
                 success = await self.ensure_data_connector_started(
                     connector_name, trading_pair
