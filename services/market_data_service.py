@@ -596,11 +596,21 @@ class MarketDataService:
                 tickers = await fetch_tickers(
                     connector, base_connector_name, raise_on_error=True
                 )
-                prices = {
-                    pair: float(tickers[pair].price)
-                    for pair in trading_pairs
-                    if pair in tickers
-                }
+                prices = {}
+                for pair in trading_pairs:
+                    ticker = tickers.get(pair)
+                    if ticker is None and base_connector_name == "kraken":
+                        # Kraken's public AssetPairs metadata may expose the
+                        # Bitcoin base asset as XBT while the configured
+                        # Hummingbot trading pair is BTC. Resolve that one
+                        # canonical alias without changing the requested pair
+                        # returned to the caller or execution adapter.
+                        base, separator, quote = pair.partition("-")
+                        if separator and base.upper() in {"BTC", "XBT"}:
+                            alias = ("XBT" if base.upper() == "BTC" else "BTC") + "-" + quote
+                            ticker = tickers.get(alias)
+                    if ticker is not None:
+                        prices[pair] = float(ticker.price)
                 if not prices:
                     return {
                         "error": (
