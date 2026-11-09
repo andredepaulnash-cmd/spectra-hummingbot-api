@@ -74,7 +74,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Build the exact alpha API image
-        run: docker build --pull --progress=plain -t spectra-finance/hummingbot-api:local -f Dockerfile .
+        run: docker build --pull --progress=plain -t localhost/spectra-finance/hummingbot-api:local -f Dockerfile .
       - name: Checkout matching Spectra Core alpha helpers
         uses: actions/checkout@v4
         with:
@@ -130,6 +130,11 @@ jobs:
             -e 's/container_name: hummingbot-api/container_name: spectra-ci-hummingbot-api/' \
             -e 's/container_name: hummingbot-broker/container_name: spectra-ci-hummingbot-broker/' \
             -e 's/container_name: hummingbot-postgres/container_name: spectra-ci-hummingbot-postgres/' \
+            -e 's|docker.io/emqx/emqx:5|docker.io/emqx/emqx:5.10.5|' \
+            -e 's|./bots:/hummingbot-api/bots|./bots:/hummingbot-api/bots:Z|' \
+            -e 's|./.emqx/auth-bootstrap.csv:/opt/emqx/etc/auth-bootstrap.csv:ro|./.emqx/auth-bootstrap.csv:/opt/emqx/etc/auth-bootstrap.csv:ro,Z|' \
+            -e 's|./emqx/acl.conf:/opt/emqx/etc/acl.conf:ro|./emqx/acl.conf:/opt/emqx/etc/acl.conf:ro,Z|' \
+            -e '/127.0.0.1:5432:5432/d' \
             docker-compose.yml > docker-compose.alpha-ci.yml
           ! grep -Eq 'docker.sock|host.docker.internal|host-gateway' docker-compose.alpha-ci.yml
           docker compose -p spectra-ci -f docker-compose.alpha-ci.yml up -d
