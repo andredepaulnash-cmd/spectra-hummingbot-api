@@ -314,3 +314,101 @@ async def test_data_connector_start_waits_for_tracker_ready(monkeypatch):
     assert sleep_calls == 3
     assert service._data_connectors_started["kraken_paper_trade"] is True
 
+
+
+@pytest.mark.asyncio
+async def test_paper_pair_symbol_map_failure_fails_closed():
+    class FakeDataConnector:
+        async def exchange_symbol_associated_to_pair(self, trading_pair):
+            raise RuntimeError("public exchange-info request failed")
+
+    service = UnifiedConnectorService.__new__(UnifiedConnectorService)
+
+    assert await service._is_trading_pair_supported(
+        FakeDataConnector(), "BTC-USD"
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_paper_pair_is_validated_before_tracker_registration():
+    from types import SimpleNamespace
+
+    from unittest.mock import AsyncMock
+
+    class FakeDataConnector:
+        def __init__(self):
+            self.order_book_tracker = SimpleNamespace(order_books={})
+            self.add_trading_pair = AsyncMock(return_value=True)
+
+        async def exchange_symbol_associated_to_pair(self, trading_pair):
+            raise KeyError(trading_pair)
+
+    data_connector = FakeDataConnector()
+    paper_connector = SimpleNamespace(
+        order_book_tracker=SimpleNamespace(order_books={})
+    )
+    service = UnifiedConnectorService.__new__(UnifiedConnectorService)
+    service._data_connectors_started = {}
+    service.get_best_connector_for_market = lambda *_args: paper_connector
+    service.get_data_connector = lambda _name: data_connector
+    service.ensure_data_connector_started = AsyncMock(return_value=True)
+
+    result = await service.initialize_order_book(
+        "kraken_paper_trade", "NOT-A-REAL-PAIR"
+    )
+
+    assert result is False
+    service.ensure_data_connector_started.assert_not_awaited()
+    data_connector.add_trading_pair.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_valid_paper_pair_is_validated_before_data_connector_start():
+    from types import SimpleNamespace
+
+    from unittest.mock import AsyncMock
+
+    events = []
+
+    class FakeDataConnector:
+        def __init__(self):
+            self.order_book_tracker = SimpleNamespace(order_books={})
+            self.add_trading_pair = AsyncMock(return_value=True)
+
+        async def exchange_symbol_associated_to_pair(self, trading_pair):
+            events.append(("validate", trading_pair))
+            return "XXBTZUSD"
+
+    data_connector = FakeDataConnector()
+    paper_connector = SimpleNamespace(
+        order_book_tracker=SimpleNamespace(order_books={})
+    )
+    service = UnifiedConnectorService.__new__(UnifiedConnectorService)
+    service._data_connectors_started = {}
+    service.get_best_connector_for_market = lambda *_args: paper_connector
+    service.get_data_connector = lambda _name: data_connector
+
+    async def start_data_connector(_name, pair):
+        events.append(("start", pair))
+        return True
+
+    async def wait_for_book(_tracker, pair, _timeout):
+        events.append(("snapshot", pair))
+        return True
+
+    service.ensure_data_connector_started = AsyncMock(
+        side_effect=start_data_connector
+    )
+    service._wait_for_order_book = AsyncMock(side_effect=wait_for_book)
+    service._ensure_paper_trade_market_ready = lambda *_args: True
+
+    result = await service.initialize_order_book(
+        "kraken_paper_trade", "BTC-USD"
+    )
+
+    assert result is True
+    assert events == [
+        ("validate", "BTC-USD"),
+        ("start", "BTC-USD"),
+        ("snapshot", "BTC-USD"),
+    ]
