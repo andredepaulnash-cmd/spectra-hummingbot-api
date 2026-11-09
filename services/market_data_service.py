@@ -611,6 +611,39 @@ class MarketDataService:
                             ticker = tickers.get(alias)
                     if ticker is not None:
                         prices[pair] = float(ticker.price)
+                # Kraken's public ticker adapter can omit a requested
+                # alias even when the pair's public order book is available.
+                # Use a fresh two-sided public book as a read-only midpoint
+                # fallback; never consult paper-simulated fill prices.
+                for pair in trading_pairs:
+                    if pair in prices:
+                        continue
+                    book = await self.get_order_book_data(
+                        connector_name,
+                        pair,
+                        depth=1,
+                        account_name=account_name,
+                    )
+                    if not isinstance(book, dict) or book.get("error"):
+                        continue
+                    observed_at = book.get("timestamp")
+                    try:
+                        observed = float(observed_at)
+                        bids = book.get("bids") or []
+                        asks = book.get("asks") or []
+                        bid = float(bids[0][0]) if bids else 0.0
+                        ask = float(asks[0][0]) if asks else 0.0
+                    except (TypeError, ValueError, IndexError, KeyError):
+                        continue
+                    if (
+                        observed <= 0
+                        or time.time() - observed > self._ticker_max_age
+                        or bid <= 0
+                        or ask <= bid
+                    ):
+                        continue
+                    prices[pair] = (bid + ask) / 2
+
                 if not prices:
                     return {
                         "error": (
