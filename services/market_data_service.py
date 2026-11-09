@@ -635,9 +635,11 @@ class MarketDataService:
                         ask = float(asks[0][0]) if asks else 0.0
                     except (TypeError, ValueError, IndexError, KeyError):
                         continue
+                    now = time.time()
                     if (
                         observed <= 0
-                        or time.time() - observed > self._ticker_max_age
+                        or observed > now
+                        or now - observed > self._ticker_max_age
                         or bid <= 0
                         or ask <= bid
                     ):
