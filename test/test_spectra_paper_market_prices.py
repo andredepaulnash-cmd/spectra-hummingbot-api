@@ -47,3 +47,20 @@ async def test_paper_prices_report_missing_public_market_pair(monkeypatch):
 
     assert "error" in result
     assert "No public market prices returned" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_kraken_paper_prices_resolve_xbt_alias_to_requested_btc_pair(monkeypatch):
+    service = MarketDataService.__new__(MarketDataService)
+    connector_service = Mock()
+    connector_service.get_data_connector.return_value = object()
+    service._connector_service = connector_service
+    fetch = AsyncMock(
+        return_value={"XBT-USD": Ticker(price=Decimal("65000"))}
+    )
+    monkeypatch.setattr(market_data_module, "fetch_tickers", fetch)
+
+    prices = await service.get_prices("kraken_paper_trade", ["BTC-USD"])
+
+    assert prices == {"BTC-USD": 65000.0}
+    fetch.assert_awaited_once()
