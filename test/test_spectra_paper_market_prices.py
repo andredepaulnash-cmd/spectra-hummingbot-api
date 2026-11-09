@@ -37,6 +37,8 @@ async def test_paper_prices_report_missing_public_market_pair(monkeypatch):
     connector_service = Mock()
     connector_service.get_data_connector.return_value = object()
     service._connector_service = connector_service
+    service._ticker_max_age = 60
+    service.get_order_book_data = AsyncMock(return_value={"error": "not available"})
     monkeypatch.setattr(
         market_data_module,
         "fetch_tickers",
@@ -64,3 +66,32 @@ async def test_kraken_paper_prices_resolve_xbt_alias_to_requested_btc_pair(monke
 
     assert prices == {"BTC-USD": 65000.0}
     fetch.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_kraken_paper_prices_fall_back_to_fresh_public_order_book_midpoint(monkeypatch):
+    service = MarketDataService.__new__(MarketDataService)
+    connector_service = Mock()
+    connector_service.get_data_connector.return_value = object()
+    service._connector_service = connector_service
+    service._ticker_max_age = 60
+    service.get_order_book_data = AsyncMock(
+        return_value={
+            "trading_pair": "BTC-USD",
+            "bids": [[Decimal("64990"), Decimal("1")]],
+            "asks": [[Decimal("65010"), Decimal("1")]],
+            "timestamp": __import__("time").time(),
+        }
+    )
+    monkeypatch.setattr(
+        market_data_module,
+        "fetch_tickers",
+        AsyncMock(return_value={}),
+    )
+
+    prices = await service.get_prices("kraken_paper_trade", ["BTC-USD"])
+
+    assert prices == {"BTC-USD": 65000.0}
+    service.get_order_book_data.assert_awaited_once_with(
+        "kraken_paper_trade", "BTC-USD", depth=1, account_name=None
+    )
