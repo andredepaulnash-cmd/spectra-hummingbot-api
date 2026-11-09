@@ -254,6 +254,12 @@ jobs:
           echo "http=$status" >> "$GITHUB_OUTPUT"
           echo "summary=$summary" >> "$GITHUB_OUTPUT"
           echo "Pair initialization HTTP $status: $summary" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$status" != "200" ]]; then
+            {
+              echo "### Paper API container logs at pair initialization failure"
+              docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --tail=140 || true
+            } >> "$GITHUB_STEP_SUMMARY" 2>&1
+          fi
 
       - name: "Validate Kraken paper pair initialization (HTTP ${{ steps.pair_init.outputs.http }}: ${{ steps.pair_init.outputs.summary }})"
         shell: bash
