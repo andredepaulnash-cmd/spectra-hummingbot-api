@@ -119,9 +119,10 @@ jobs:
           EOF
           python spectra-core/scripts/generate_spectra_dispatch_keys.py --core-env "$RUNNER_TEMP/spectra-core.env" --api-env .env
           chmod 600 .env
-      - name: Start paper-only API and initialize Kraken paper connector
+      - name: Prepare and start isolated paper API stack
         shell: bash
         run: |
+          set -Eeuo pipefail
           sed \
             -e '\|/var/run/docker.sock:/var/run/docker.sock|d' \
             -e '/extra_hosts:/d' \
@@ -131,19 +132,34 @@ jobs:
             -e 's/container_name: hummingbot-broker/container_name: spectra-ci-hummingbot-broker/' \
             -e 's/container_name: hummingbot-postgres/container_name: spectra-ci-hummingbot-postgres/' \
             -e 's|docker.io/emqx/emqx:5|docker.io/emqx/emqx:5.10.5|' \
-            -e '/127.0.0.1:5432:5432/d' \
+            -e '/5432:5432/d' \
             docker-compose.yml > docker-compose.alpha-ci.yml
           ! grep -Eq 'docker.sock|host.docker.internal|host-gateway' docker-compose.alpha-ci.yml
-          docker compose -p spectra-ci -f docker-compose.alpha-ci.yml up -d
-          API_AUTH="spectra_alpha:$(sed -n 's/^PASSWORD=//p' .env)"
-          for attempt in $(seq 1 180); do
-            curl -fsS -u "$API_AUTH" http://127.0.0.1:8000/openapi.json >/dev/null 2>&1 && break
-            sleep 2
-          done
-          curl -fsS -u "$API_AUTH" http://127.0.0.1:8000/openapi.json >/dev/null || {
-            docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --tail=200
+          docker compose -p spectra-ci -f docker-compose.alpha-ci.yml config -q
+          docker compose -p spectra-ci -f docker-compose.alpha-ci.yml up -d || {
+            docker compose -p spectra-ci -f docker-compose.alpha-ci.yml ps -a || true
+            docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --tail=200 || true
             exit 1
           }
+          API_PASS="$(python -c 'from pathlib import Path; print(next(x.split("=",1)[1] for x in Path(".env").read_text().splitlines() if x.startswith("PASSWORD=")))')"
+          echo "API_AUTH=spectra_alpha:$API_PASS" >> "$GITHUB_ENV"
+
+      - name: Wait for authenticated paper API
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for attempt in $(seq 1 180); do
+            curl -fsS -u "$API_AUTH" http://127.0.0.1:8000/openapi.json >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          docker compose -p spectra-ci -f docker-compose.alpha-ci.yml ps -a || true
+          docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --tail=200 || true
+          exit 1
+
+      - name: Verify Kraken paper connector runtime
+        shell: bash
+        run: |
+          set -Eeuo pipefail
           for attempt in $(seq 1 180); do
             if curl -fsS -u "$API_AUTH" http://127.0.0.1:8000/spectra/runtime > "$RUNNER_TEMP/spectra-runtime.json"; then
               if python -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if any(n.endswith("/kraken_paper_trade") for n in d.get("paper_connectors", [])) else 1)' "$RUNNER_TEMP/spectra-runtime.json"; then
@@ -152,14 +168,10 @@ jobs:
             fi
             sleep 2
           done
-          curl -fsS -u "$API_AUTH" http://127.0.0.1:8000/spectra/runtime > "$RUNNER_TEMP/spectra-runtime.json" || {
-            docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --tail=200
-            exit 1
-          }
           python - <<'PY'
-          import json
+          import json, os
           from pathlib import Path
-          runtime = json.loads(Path(__import__("os").environ["RUNNER_TEMP"] + "/spectra-runtime.json").read_text())
+          runtime = json.loads(Path(os.environ["RUNNER_TEMP"] + "/spectra-runtime.json").read_text())
           assert runtime["mode"] == "PAPER_ONLY", runtime
           assert runtime["paper_only"] is True, runtime
           assert runtime["paper_connectors_only"] is True, runtime
@@ -168,74 +180,61 @@ jobs:
           assert runtime["live_dispatch_available"] is False, runtime
           print("Verified: Kraken paper connector initialized; live dispatch is unavailable.")
           PY
-          curl -fsS -u "$API_AUTH" \
-            "http://127.0.0.1:8000/connectors/kraken_paper_trade/trading-rules?trading_pairs=BTC-USD" \
-            > "$RUNNER_TEMP/kraken-paper-rules.json"
+
+      - name: Verify public Kraken BTC-USD trading rules
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fsS -u "$API_AUTH" "http://127.0.0.1:8000/connectors/kraken_paper_trade/trading-rules?trading_pairs=BTC-USD" > "$RUNNER_TEMP/kraken-paper-rules.json"
           python - <<'PY'
-          import json
-          import os
+          import json, os
           from pathlib import Path
           rules = json.loads(Path(os.environ["RUNNER_TEMP"] + "/kraken-paper-rules.json").read_text())
           assert "BTC-USD" in rules, rules
           assert rules["BTC-USD"]["min_order_size"] > 0, rules
           assert rules["BTC-USD"]["supports_limit_orders"] is True, rules
-          print("Verified: Kraken paper connector resolves live public market rules through its keyless base connector.")
+          print("Verified: public BTC-USD trading rules are available to the paper connector.")
           PY
-          set +e
-          curl -sS -u "$API_AUTH" -H "Content-Type: application/json" \
+
+      - name: Initialize Kraken paper BTC-USD market data
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fsS -u "$API_AUTH" -H "Content-Type: application/json" \
             -d '{"connector_name":"kraken_paper_trade","trading_pair":"BTC-USD","account_name":"master_account","timeout":30}' \
-            http://127.0.0.1:8000/market-data/trading-pair/add \
-            -o "$RUNNER_TEMP/kraken-paper-pair.json" -w '%{http_code}' \
-            > "$RUNNER_TEMP/kraken-paper-pair-status.txt"
-          PAIR_STATUS=$(cat "$RUNNER_TEMP/kraken-paper-pair-status.txt")
-          set -e
-          if [ "$PAIR_STATUS" != "200" ]; then
-            echo "Kraken paper trading-pair/add returned HTTP $PAIR_STATUS:"
-            cat "$RUNNER_TEMP/kraken-paper-pair.json"
-            docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --no-color hummingbot-api | tail -n 200
-            exit 1
-          fi
+            http://127.0.0.1:8000/market-data/trading-pair/add > "$RUNNER_TEMP/kraken-paper-pair.json"
           python - <<'PY'
-          import json
-          import os
+          import json, os
           from pathlib import Path
           result = json.loads(Path(os.environ["RUNNER_TEMP"] + "/kraken-paper-pair.json").read_text())
           assert result["success"] is True, result
           PY
-          set +e
-          curl -sS -u "$API_AUTH" -H "Content-Type: application/json" \
+
+      - name: Verify Kraken paper order book and public prices
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fsS -u "$API_AUTH" -H "Content-Type: application/json" \
             -d '{"connector_name":"kraken_paper_trade","trading_pair":"BTC-USD","depth":5}' \
-            http://127.0.0.1:8000/market-data/order-book \
-            -o "$RUNNER_TEMP/kraken-paper-book.json" -w '%{http_code}' \
-            > "$RUNNER_TEMP/kraken-paper-book-status.txt"
-          BOOK_STATUS=$(cat "$RUNNER_TEMP/kraken-paper-book-status.txt")
-          set -e
-          if [ "$BOOK_STATUS" != "200" ]; then
-            echo "Kraken paper order-book endpoint returned HTTP $BOOK_STATUS:"
-            cat "$RUNNER_TEMP/kraken-paper-book.json"
-            docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --no-color hummingbot-api | tail -n 160
-            exit 1
-          fi
+            http://127.0.0.1:8000/market-data/order-book > "$RUNNER_TEMP/kraken-paper-book.json"
           python - <<'PY'
-          import json
-          import os
+          import json, os
           from pathlib import Path
           book = json.loads(Path(os.environ["RUNNER_TEMP"] + "/kraken-paper-book.json").read_text())
           assert book["trading_pair"] == "BTC-USD", book
           assert book["bids"] and book["asks"], book
-          print("Verified: Kraken paper adapter exposes a live public order book for executor pricing.")
+          print("Verified: paper adapter exposes public BTC-USD bid/ask data.")
           PY
           curl -fsS -u "$API_AUTH" -H "Content-Type: application/json" \
             -d '{"connector_name":"kraken_paper_trade","trading_pairs":["BTC-USD"]}' \
             http://127.0.0.1:8000/market-data/prices > "$RUNNER_TEMP/kraken-paper-prices.json"
           python - <<'PY'
-          import json
-          import os
+          import json, os
           from pathlib import Path
           result = json.loads(Path(os.environ["RUNNER_TEMP"] + "/kraken-paper-prices.json").read_text())
           assert result["connector"] == "kraken_paper_trade", result
           assert result["prices"]["BTC-USD"] > 0, result
-          print("Verified: paper price reads use Kraken's keyless public ticker adapter.")
+          print("Verified: paper price reads use the keyless public ticker adapter.")
           PY
           grep -q 'SPECTRA_PAPER_ONLY=true' .env
           grep -q 'SPECTRA_ALLOW_LIVE_EXECUTION=false' .env
