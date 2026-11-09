@@ -148,4 +148,5 @@ def paper_allowed_post_paths() -> tuple[str, ...]:
         "/portfolio/history",
         "/market-data/prices",
         "/market-data/candles",
+        "/gateway/clmm/positions/search",
     )
