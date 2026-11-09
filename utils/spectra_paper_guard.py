@@ -34,6 +34,9 @@ _PAPER_POST_PATTERNS = tuple(
         r"/portfolio/state",
         r"/portfolio/history",
         r"/market-data/.*",
+        # Search uses POST for filtering/pagination but is read-only; keep the
+        # exception exact so CLMM write routes remain blocked.
+        r"/gateway/clmm/positions/search",
     )
 )
 
