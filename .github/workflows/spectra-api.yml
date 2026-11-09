@@ -119,7 +119,7 @@ jobs:
           EOF
           python spectra-core/scripts/generate_spectra_dispatch_keys.py --core-env "$RUNNER_TEMP/spectra-core.env" --api-env .env
           chmod 600 .env
-      - name: Prepare and start isolated paper API stack
+      - name: Generate and validate isolated paper Compose file
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -136,6 +136,11 @@ jobs:
             docker-compose.yml > docker-compose.alpha-ci.yml
           ! grep -Eq 'docker.sock|host.docker.internal|host-gateway' docker-compose.alpha-ci.yml
           docker compose -p spectra-ci -f docker-compose.alpha-ci.yml config -q
+
+      - name: Start isolated paper API containers
+        shell: bash
+        run: |
+          set -Eeuo pipefail
           docker compose -p spectra-ci -f docker-compose.alpha-ci.yml up -d || {
             docker compose -p spectra-ci -f docker-compose.alpha-ci.yml ps -a || true
             docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --tail=200 || true
@@ -143,7 +148,6 @@ jobs:
           }
           API_PASS="$(python -c 'from pathlib import Path; print(next(x.split("=",1)[1] for x in Path(".env").read_text().splitlines() if x.startswith("PASSWORD=")))')"
           echo "API_AUTH=spectra_alpha:$API_PASS" >> "$GITHUB_ENV"
-
       - name: Wait for authenticated paper API
         shell: bash
         run: |
