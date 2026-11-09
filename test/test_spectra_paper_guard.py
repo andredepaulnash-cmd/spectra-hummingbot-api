@@ -23,6 +23,7 @@ def test_gateway_bot_docker_account_and_script_mutations_are_blocked():
         ("POST", "/gateway/swap/execute"),
         ("POST", "/gateway/swap/execute-quote"),
         ("POST", "/gateway/clmm/open"),
+        ("POST", "/gateway/clmm/positions/search/refresh"),
         ("POST", "/gateway/amm/add-liquidity"),
         ("POST", "/bot-orchestration/start-bot"),
         ("POST", "/bot-orchestration/deploy-v2-script"),
@@ -42,6 +43,7 @@ def test_only_exact_paper_routes_are_allowed():
     assert not is_paper_allowed_post_path("/trading/orders/extra")
     assert not is_paper_allowed_post_path("/market-data")
     assert not is_paper_allowed_post_path("/gateway/swap/execute")
+    assert not is_paper_allowed_post_path("/gateway/clmm/positions/search/extra")
 
 
 def test_all_non_post_mutations_are_blocked():
