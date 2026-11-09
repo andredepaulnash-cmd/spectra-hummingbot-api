@@ -21,6 +21,7 @@ from hummingbot.data_feed.candles_feed.data_types import CandlesConfig
 from services.ticker_sources import Ticker, TickerFetchError, TickerUnsupportedError, fetch_tickers
 from services.unified_connector_service import UnknownConnectorError
 from utils.rate_finder import find_rate
+from utils.spectra_paper_guard import is_paper_trade_connector_name
 
 logger = logging.getLogger(__name__)
 
@@ -583,6 +584,32 @@ class MarketDataService:
             Dictionary mapping trading pairs to prices
         """
         try:
+            if is_paper_trade_connector_name(connector_name):
+                # A paper connector is an execution identity, not a market-data
+                # venue. Resolve its keyless public adapter (the connector service
+                # maps *_paper_trade to the base exchange with blank credentials),
+                # then use the exchange's bulk ticker adapter. This avoids asking
+                # an unstarted PaperTradeExchange for prices and never enables
+                # live order execution.
+                base_connector_name = connector_name.lower().removesuffix("_paper_trade")
+                connector = self._connector_service.get_data_connector(connector_name)
+                tickers = await fetch_tickers(
+                    connector, base_connector_name, raise_on_error=True
+                )
+                prices = {
+                    pair: float(tickers[pair].price)
+                    for pair in trading_pairs
+                    if pair in tickers
+                }
+                if not prices:
+                    return {
+                        "error": (
+                            f"No public market prices returned for {connector_name}: "
+                            f"requested {', '.join(trading_pairs) or 'no trading pairs'}"
+                        )
+                    }
+                return prices
+
             connector = self._connector_service.get_best_connector_for_market(
                 connector_name, account_name
             )
