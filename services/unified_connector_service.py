@@ -445,19 +445,24 @@ class UnifiedConnectorService:
             except Exception:
                 pass
 
-        # PaperTradeExchange is a wrapper around the base exchange. Its shared
-        # order-book tracker belongs to the keyless public data connector, and
-        # symbol support must be checked against that same base connector rather
-        # than the wrapper's partially initialized symbol map.
+        # PaperTradeExchange is a wrapper: the public data connector owns the
+        # exchange symbol map and shared order-book tracker. Start its supported
+        # network lifecycle before validating the pair; otherwise the symbol map
+        # may still be empty and a transient KeyError can be mistaken for a
+        # genuinely unsupported market.
         is_paper_trade = connector_name.endswith("_paper_trade")
         data_connector = (
             self.get_data_connector(connector_name) if is_paper_trade else None
         )
-        validation_connector = data_connector if is_paper_trade else connector
 
-        # Reject pairs the exchange doesn't list before registering them anywhere.
-        # For paper connectors this deliberately validates against the underlying
-        # public-data connector that owns the shared tracker and exchange symbol map.
+        if is_paper_trade and not self._data_connectors_started.get(connector_name, False):
+            success = await self.ensure_data_connector_started(
+                connector_name, trading_pair
+            )
+            if not success:
+                return False
+
+        validation_connector = data_connector if is_paper_trade else connector
         if not await self._is_trading_pair_supported(validation_connector, trading_pair):
             logger.error(
                 f"Trading pair {trading_pair} is not listed on {connector_name} - "
@@ -465,17 +470,10 @@ class UnifiedConnectorService:
             )
             return False
 
-        # PaperTradeExchange shares its tracker with the keyless data connector.
-        # Start that base connector so its exchange symbol map, REST snapshot and
-        # WebSocket subscription are initialized through the supported lifecycle.
+        # The initial start registers the pair before start_network(). For an
+        # already-running data connector, add any newly requested pair now.
         if is_paper_trade:
-            if not self._data_connectors_started.get(connector_name, False):
-                success = await self.ensure_data_connector_started(
-                    connector_name, trading_pair
-                )
-                if not success:
-                    return False
-            elif trading_pair not in data_connector.order_book_tracker.order_books:
+            if trading_pair not in data_connector.order_book_tracker.order_books:
                 success = await data_connector.add_trading_pair(trading_pair)
                 if not success:
                     return False
