@@ -241,20 +241,42 @@ jobs:
           print("Verified: public BTC-USD trading rules are available to the paper connector.")
           PY
 
-      - name: Initialize Kraken paper BTC-USD market data
+      - name: Request Kraken paper BTC-USD pair initialization
+        id: pair_init
         shell: bash
         run: |
           set -Eeuo pipefail
-          curl -fsS -u "$API_AUTH" -H "Content-Type: application/json" \
+          status="$(curl -sS -u "$API_AUTH" -H "Content-Type: application/json" \
             -d '{"connector_name":"kraken_paper_trade","trading_pair":"BTC-USD","account_name":"master_account","timeout":30}' \
-            http://127.0.0.1:8000/market-data/trading-pair/add > "$RUNNER_TEMP/kraken-paper-pair.json"
+            -o "$RUNNER_TEMP/kraken-paper-pair.json" -w '%{http_code}' \
+            http://127.0.0.1:8000/market-data/trading-pair/add || true)"
+          summary="$(python - "$RUNNER_TEMP/kraken-paper-pair.json" <<'PY'
+          import json, sys
+          from pathlib import Path
+          path = Path(sys.argv[1])
+          try:
+              data = json.loads(path.read_text()) if path.exists() else {}
+          except Exception as exc:
+              data = {"parse_error": type(exc).__name__}
+          detail = data.get("message") or data.get("detail") or data.get("error") or data.get("success")
+          print(str(detail)[:140].replace("\n", " "))
+          PY
+          )"
+          echo "http=$status" >> "$GITHUB_OUTPUT"
+          echo "summary=$summary" >> "$GITHUB_OUTPUT"
+          echo "Pair initialization HTTP $status: $summary" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate Kraken paper pair initialization (HTTP ${{ steps.pair_init.outputs.http }}: ${{ steps.pair_init.outputs.summary }})
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "${{ steps.pair_init.outputs.http }}" = "200"
           python - <<'PY'
           import json, os
           from pathlib import Path
           result = json.loads(Path(os.environ["RUNNER_TEMP"] + "/kraken-paper-pair.json").read_text())
-          assert result["success"] is True, result
+          assert result.get("success") is True, result
           PY
-
       - name: Verify Kraken paper order book and public prices
         shell: bash
         run: |
