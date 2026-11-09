@@ -266,3 +266,51 @@ async def test_paper_trading_rules_use_keyless_base_exchange_data_connector():
     assert rules["BTC-USD"]["min_notional_size"] == 1
     assert service._connector_service.data_calls == ["kraken_paper_trade"]
     assert service._connector_service.best_calls == []
+
+@pytest.mark.asyncio
+async def test_data_connector_start_waits_for_tracker_ready(monkeypatch):
+    from services import unified_connector_service as module
+
+    class FakeTracker:
+        ready = False
+        _order_book_stream_listener_task = object()
+
+    class FakeDataConnector:
+        def __init__(self):
+            self._trading_pairs = []
+            self.order_book_tracker = FakeTracker()
+            self.started = False
+            self.stopped = False
+
+        async def start_network(self):
+            self.started = True
+
+        async def stop_network(self):
+            self.stopped = True
+
+    connector = FakeDataConnector()
+    service = UnifiedConnectorService.__new__(UnifiedConnectorService)
+    service._data_connectors_started = {}
+    service.get_data_connector = lambda _name: connector
+
+    sleep_calls = 0
+
+    async def advance_tracker(_delay):
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 3:
+            connector.order_book_tracker.ready = True
+
+    monkeypatch.setattr(module.asyncio, "sleep", advance_tracker)
+
+    result = await service.ensure_data_connector_started(
+        "kraken_paper_trade",
+        "BTC-USD",
+    )
+
+    assert result is True
+    assert connector.started is True
+    assert connector.stopped is False
+    assert sleep_calls == 3
+    assert service._data_connectors_started["kraken_paper_trade"] is True
+
