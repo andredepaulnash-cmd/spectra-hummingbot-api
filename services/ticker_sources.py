@@ -581,11 +581,37 @@ async def _hyperliquid_perpetual(connector, symbol_map: Mapping[str, str]) -> Di
     return tickers
 
 
+async def _kraken(connector, symbol_map: Mapping[str, str]) -> Dict[str, Ticker]:
+    """Kraken ticker result keys use AssetPairs keys, not the symbol-map altname keys.
+
+    Kraken's AssetPairs symbol map is keyed by altname (e.g. XBTUSD), while the
+    public Ticker response is keyed by the raw AssetPairs key (e.g. XXBTZUSD).
+    Join both forms to the same Hummingbot pair before normalizing.
+    """
+    raw_to_hb = dict(symbol_map)
+    asset_pairs = await connector.get_asset_pairs()
+    for hb_pair, details in asset_pairs.items():
+        if not isinstance(details, dict):
+            continue
+        base = details.get("base")
+        quote = details.get("quote")
+        if isinstance(base, str) and isinstance(quote, str):
+            raw_to_hb[f"{base}{quote}"] = hb_pair
+        altname = details.get("altname")
+        if isinstance(altname, str):
+            raw_to_hb[altname] = hb_pair
+
+    spec = TICKER_SPECS["kraken"]
+    rows = await _request(connector, spec)
+    return _normalize(raw_to_hb, rows, _spec_extract(spec), "kraken")
+
+
 TICKER_ADAPTERS: Dict[
     str, Callable[[Any, Mapping[str, str]], Awaitable[Dict[str, Ticker]]]
 ] = {
     "hyperliquid": _hyperliquid,
     "hyperliquid_perpetual": _hyperliquid_perpetual,
+    "kraken": _kraken,
 }
 
 
