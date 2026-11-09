@@ -23,8 +23,14 @@ from utils.bot_archiver import BotArchiver
 
 
 def get_bots_orchestrator(request: Request) -> BotsOrchestrator:
-    """Get BotsOrchestrator service from app state."""
-    return request.app.state.bots_orchestrator
+    """Get BotsOrchestrator service, or report when paper-only mode disables it."""
+    service = getattr(request.app.state, "bots_orchestrator", None)
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Bot orchestration is disabled in Spectra paper-only mode.",
+        )
+    return service
 
 
 def get_accounts_service(request: Request) -> AccountsService:
