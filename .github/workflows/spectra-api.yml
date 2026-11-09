@@ -250,23 +250,12 @@ jobs:
             -d '{"connector_name":"kraken_paper_trade","trading_pair":"BTC-USD","account_name":"master_account","timeout":30}' \
             -o "$RUNNER_TEMP/kraken-paper-pair.json" -w '%{http_code}' \
             http://127.0.0.1:8000/market-data/trading-pair/add || true)"
-          summary="$(python - "$RUNNER_TEMP/kraken-paper-pair.json" <<'PY'
-          import json, sys
-          from pathlib import Path
-          path = Path(sys.argv[1])
-          try:
-              data = json.loads(path.read_text()) if path.exists() else {}
-          except Exception as exc:
-              data = {"parse_error": type(exc).__name__}
-          detail = data.get("message") or data.get("detail") or data.get("error") or data.get("success")
-          print(str(detail)[:140].replace("\n", " "))
-          PY
-          )"
+          summary="$(python -c 'import json,sys; from pathlib import Path; p=Path(sys.argv[1]); d=json.loads(p.read_text()) if p.exists() else {}; print(str(d.get("message") or d.get("detail") or d.get("error") or d.get("success"))[:140].replace("\\n"," "))' "$RUNNER_TEMP/kraken-paper-pair.json")"
           echo "http=$status" >> "$GITHUB_OUTPUT"
           echo "summary=$summary" >> "$GITHUB_OUTPUT"
           echo "Pair initialization HTTP $status: $summary" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Validate Kraken paper pair initialization (HTTP ${{ steps.pair_init.outputs.http }}: ${{ steps.pair_init.outputs.summary }})
+      - name: "Validate Kraken paper pair initialization (HTTP ${{ steps.pair_init.outputs.http }}: ${{ steps.pair_init.outputs.summary }})"
         shell: bash
         run: |
           set -Eeuo pipefail
