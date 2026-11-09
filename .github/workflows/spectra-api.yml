@@ -223,6 +223,18 @@ jobs:
           assert book["bids"] and book["asks"], book
           print("Verified: Kraken paper adapter exposes a live public order book for executor pricing.")
           PY
+          curl -fsS -u "$API_AUTH" -H "Content-Type: application/json" \
+            -d '{"connector_name":"kraken_paper_trade","trading_pairs":["BTC-USD"]}' \
+            http://127.0.0.1:8000/market-data/prices > "$RUNNER_TEMP/kraken-paper-prices.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          result = json.loads(Path(os.environ["RUNNER_TEMP"] + "/kraken-paper-prices.json").read_text())
+          assert result["connector"] == "kraken_paper_trade", result
+          assert result["prices"]["BTC-USD"] > 0, result
+          print("Verified: paper price reads use Kraken's keyless public ticker adapter.")
+          PY
           grep -q 'SPECTRA_PAPER_ONLY=true' .env
           grep -q 'SPECTRA_ALLOW_LIVE_EXECUTION=false' .env
       - name: Stop paper-only API stack
