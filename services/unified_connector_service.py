@@ -315,9 +315,15 @@ class UnifiedConnectorService:
         except KeyError:
             return False
         except Exception as e:
-            # Symbol map unavailable (network error, etc.) - don't block on it
-            logger.warning(f"Could not validate {trading_pair} against symbol map: {e}")
-            return True
+            # A failed symbol-map lookup is not proof that the pair is valid.
+            # Fail closed so an unknown pair cannot poison the shared WebSocket
+            # subscription; the caller can retry initialization after recovery.
+            logger.warning(
+                "Could not validate %s against symbol map; refusing registration: %s",
+                trading_pair,
+                e,
+            )
+            return False
 
     def _purge_trading_pair_registration(
         self,
@@ -445,33 +451,27 @@ class UnifiedConnectorService:
             except Exception:
                 pass
 
-        # PaperTradeExchange is a wrapper: the public data connector owns the
-        # exchange symbol map and shared order-book tracker. Start its supported
-        # network lifecycle before validating the pair; otherwise the symbol map
-        # may still be empty and a transient KeyError can be mistaken for a
-        # genuinely unsupported market.
+        # PaperTradeExchange is a wrapper around the public data connector.
+        # The wrapper does not own the exchange symbol map; use the underlying
+        # keyless connector, whose exchange_symbol_associated_to_pair() lazily
+        # initializes the map through Hummingbot's supported symbol-map API.
         is_paper_trade = connector_name.endswith("_paper_trade")
         data_connector = (
             self.get_data_connector(connector_name) if is_paper_trade else None
         )
-
-        if is_paper_trade and not self._data_connectors_started.get(connector_name, False):
-            success = await self.ensure_data_connector_started(
-                connector_name, trading_pair
-            )
-            if not success:
-                return False
-
         validation_connector = data_connector if is_paper_trade else connector
+
+        # Validate before registering the pair with the order-book tracker.
+        # Symbol-map failures are fail-closed in _is_trading_pair_supported().
         if not await self._is_trading_pair_supported(validation_connector, trading_pair):
             logger.error(
-                f"Trading pair {trading_pair} is not listed on {connector_name} - "
-                f"refusing to register it (check the quote asset)"
+                f"Trading pair {trading_pair} is not listed or could not be validated on "
+                f"{connector_name} - refusing to register it"
             )
             return False
 
-        # The initial start registers the pair before start_network(). For an
-        # already-running data connector, add any newly requested pair now.
+        # Start the public connector only after validation, so an invalid pair
+        # cannot enter its shared WebSocket subscription list.
         if is_paper_trade:
             if trading_pair not in data_connector.order_book_tracker.order_books:
                 success = await data_connector.add_trading_pair(trading_pair)
