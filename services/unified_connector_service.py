@@ -255,23 +255,40 @@ class UnifiedConnectorService:
             if trading_pair not in connector._trading_pairs:
                 connector._trading_pairs.append(trading_pair)
 
-            # Start network
+            # Start network and wait for the tracker's actual readiness signal.
+            # The stream-listener task being allocated is not proof that the
+            # initial REST snapshot/order-book initialization has completed.
+            # PaperTradeExchange.ready depends on tracker.ready, so returning
+            # after a fixed sleep can produce a false-negative paper market.
             await connector.start_network()
-            self._data_connectors_started[connector_name] = True
             logger.info(f"Started data connector: {connector_name} with pair {trading_pair}")
 
-            # Wait for order book tracker to be ready
-            max_wait = 30
-            waited = 0
+            max_wait = 30.0
+            waited = 0.0
             tracker = connector.order_book_tracker
             while waited < max_wait:
-                if tracker._order_book_stream_listener_task is not None:
-                    await asyncio.sleep(2.0)
-                    break
+                if tracker.ready:
+                    self._data_connectors_started[connector_name] = True
+                    logger.info(
+                        "Order book tracker ready for %s with pair %s",
+                        connector_name,
+                        trading_pair,
+                    )
+                    return True
                 await asyncio.sleep(0.5)
                 waited += 0.5
 
-            return True
+            logger.error(
+                "Order book tracker for %s did not become ready within %.1fs",
+                connector_name,
+                max_wait,
+            )
+            try:
+                await connector.stop_network()
+            except Exception:
+                logger.debug("Could not stop timed-out data connector %s", connector_name, exc_info=True)
+            self._data_connectors_started.pop(connector_name, None)
+            return False
 
         except Exception as e:
             logger.error(f"Error starting data connector {connector_name}: {e}")
