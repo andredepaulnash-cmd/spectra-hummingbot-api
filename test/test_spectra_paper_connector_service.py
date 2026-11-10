@@ -538,6 +538,7 @@ async def test_data_connector_start_exception_is_preserved_and_partial_start_is_
     service._data_connectors = {"kraken_paper_trade": connector}
     service._data_connectors_started = {}
     service._data_connector_start_errors = {}
+    service.get_data_connector = lambda _name: connector
 
     result = await service.ensure_data_connector_started(
         "kraken_paper_trade", "BTC-USD"
