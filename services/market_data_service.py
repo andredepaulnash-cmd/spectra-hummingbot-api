@@ -313,6 +313,24 @@ class MarketDataService:
             if not connector:
                 return {"error": f"No connector available for {connector_name}"}
 
+            # A read request must be able to initialize its own feed. In particular,
+            # paper-trade connectors share the base exchange's public order-book tracker,
+            # which is intentionally lazy and may not contain this pair yet.
+            tracker = getattr(connector, "order_book_tracker", None)
+            tracked_books = getattr(tracker, "order_books", {}) if tracker else {}
+            if trading_pair not in tracked_books:
+                initialized = await self.initialize_order_book(
+                    connector_name=connector_name,
+                    trading_pair=trading_pair,
+                    account_name=account_name,
+                )
+                if initialized:
+                    connector = self._connector_service.get_best_connector_for_market(
+                        connector_name, account_name
+                    )
+                    if not connector:
+                        return {"error": f"No connector available for {connector_name} after order book initialization"}
+
             # Try to get from existing order book tracker
             if hasattr(connector, 'order_book_tracker') and connector.order_book_tracker:
                 tracker = connector.order_book_tracker
