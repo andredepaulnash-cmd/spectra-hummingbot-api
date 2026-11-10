@@ -291,6 +291,7 @@ async def test_data_connector_start_waits_for_tracker_ready(monkeypatch):
     connector = FakeDataConnector()
     service = UnifiedConnectorService.__new__(UnifiedConnectorService)
     service._data_connectors_started = {}
+    service._data_connector_start_errors = {}
     service.get_data_connector = lambda _name: connector
 
     sleep_calls = 0
