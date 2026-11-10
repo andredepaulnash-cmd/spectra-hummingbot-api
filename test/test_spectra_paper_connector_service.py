@@ -412,3 +412,43 @@ async def test_valid_paper_pair_is_validated_before_data_connector_start():
         ("start", "BTC-USD"),
         ("snapshot", "BTC-USD"),
     ]
+
+@pytest.mark.asyncio
+async def test_order_book_data_lazily_initializes_missing_paper_book():
+    import pandas as pd
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from services.market_data_service import MarketDataService
+
+    pair = "BTC-USD"
+    connector = SimpleNamespace(
+        order_book_tracker=SimpleNamespace(order_books={})
+    )
+    order_book = SimpleNamespace(
+        snapshot=(
+            pd.DataFrame([{"price": 100.0, "amount": 1.0}]),
+            pd.DataFrame([{"price": 101.0, "amount": 2.0}]),
+        )
+    )
+    service = MarketDataService.__new__(MarketDataService)
+    service._connector_service = SimpleNamespace(
+        get_best_connector_for_market=lambda *_args: connector,
+        initialize_order_book=AsyncMock(return_value=True),
+    )
+
+    async def initialize(**kwargs):
+        assert kwargs["connector_name"] == "kraken_paper_trade"
+        assert kwargs["trading_pair"] == pair
+        connector.order_book_tracker.order_books[pair] = order_book
+        return True
+
+    service._connector_service.initialize_order_book.side_effect = initialize
+
+    result = await service.get_order_book_data(
+        "kraken_paper_trade", pair, depth=10
+    )
+
+    service._connector_service.initialize_order_book.assert_awaited_once()
+    assert result["trading_pair"] == pair
+    assert result["bids"] == [[100.0, 1.0]]
+    assert result["asks"] == [[101.0, 2.0]]
