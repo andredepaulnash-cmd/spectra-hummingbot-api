@@ -309,19 +309,70 @@ class UnifiedConnectorService:
         """
         if not hasattr(connector, "exchange_symbol_associated_to_pair"):
             return True
+
+        # Ask Hummingbot to initialize its symbol map before looking up the pair.
+        # ExchangeBase's lazy initializer logs and suppresses REST initialization
+        # errors, so an empty map otherwise appears downstream as an ordinary
+        # KeyError. Distinguish that failure from a genuinely unsupported pair.
+        symbol_map = None
+        if hasattr(connector, "trading_pair_symbol_map"):
+            try:
+                symbol_map = await connector.trading_pair_symbol_map()
+            except Exception:
+                logger.exception(
+                    "Could not load the public %s trading-pair symbol map; "
+                    "refusing to register %s",
+                    getattr(connector, "name", type(connector).__name__),
+                    trading_pair,
+                )
+                return False
+
+            if not symbol_map:
+                logger.error(
+                    "Public %s symbol map is empty after Hummingbot initialization; "
+                    "refusing to register %s. Check the exchange-info REST request "
+                    "and connector logs.",
+                    getattr(connector, "name", type(connector).__name__),
+                    trading_pair,
+                )
+                return False
+
         try:
-            await connector.exchange_symbol_associated_to_pair(trading_pair=trading_pair)
+            exchange_symbol = await connector.exchange_symbol_associated_to_pair(
+                trading_pair=trading_pair
+            )
+            logger.info(
+                "Validated public market %s as exchange symbol %s on %s",
+                trading_pair,
+                exchange_symbol,
+                getattr(connector, "name", type(connector).__name__),
+            )
             return True
         except KeyError:
+            supported_pairs = []
+            if symbol_map is not None:
+                try:
+                    supported_pairs = list(symbol_map.values())[:20]
+                except Exception:
+                    supported_pairs = []
+            logger.error(
+                "Trading pair %s is absent from the loaded %s symbol map "
+                "(%d mapped pairs; sample=%s); refusing registration",
+                trading_pair,
+                getattr(connector, "name", type(connector).__name__),
+                len(symbol_map) if symbol_map is not None else 0,
+                supported_pairs,
+            )
             return False
-        except Exception as e:
+        except Exception:
             # A failed symbol-map lookup is not proof that the pair is valid.
             # Fail closed so an unknown pair cannot poison the shared WebSocket
             # subscription; the caller can retry initialization after recovery.
-            logger.warning(
-                "Could not validate %s against symbol map; refusing registration: %s",
+            logger.exception(
+                "Could not validate %s against the public symbol map for %s; "
+                "refusing registration",
                 trading_pair,
-                e,
+                getattr(connector, "name", type(connector).__name__),
             )
             return False
 
@@ -1790,6 +1841,43 @@ class UnifiedConnectorService:
                 diagnostics["metrics"] = tracker.metrics.to_dict()
             except Exception as e:
                 diagnostics["metrics"] = {"error": str(e)}
+
+        # PaperTradeExchange wraps a separate keyless public-data connector.
+        # Report both sides: the wrapper's tracker alone cannot reveal whether
+        # public exchange-info validation failed before subscription startup.
+        if connector_name.endswith("_paper_trade"):
+            data_connector = self._data_connectors.get(connector_name)
+            if data_connector is not None:
+                data_tracker = getattr(data_connector, "order_book_tracker", None)
+                symbol_map = getattr(data_connector, "_trading_pair_symbol_map", None)
+                data_source = getattr(data_connector, "_orderbook_ds", None)
+                diagnostics["public_data_connector"] = {
+                    "connector_type": type(data_connector).__name__,
+                    "connector_name": getattr(data_connector, "name", connector_name.removesuffix("_paper_trade")),
+                    "network_started": self._data_connectors_started.get(connector_name, False),
+                    "has_order_book_tracker": data_tracker is not None,
+                    "tracker_ready": bool(getattr(data_tracker, "ready", False)),
+                    "connector_trading_pairs": list(getattr(data_connector, "_trading_pairs", []) or []),
+                    "tracker_trading_pairs": list(getattr(data_tracker, "_trading_pairs", []) or []),
+                    "symbol_map_initialized": bool(symbol_map),
+                    "symbol_map_size": len(symbol_map) if symbol_map is not None else 0,
+                    "supported_pairs_sample": list(symbol_map.values())[:20] if symbol_map else [],
+                    "shares_order_book_tracker_with_paper": (
+                        data_tracker is not None and data_tracker is tracker
+                    ),
+                    "websocket_status": (
+                        "connected"
+                        if data_source is not None and getattr(data_source, "_ws_assistant", None) is not None
+                        else "not_connected"
+                    ),
+                }
+            else:
+                diagnostics["public_data_connector"] = {
+                    "created": False,
+                    "network_started": False,
+                    "symbol_map_initialized": False,
+                    "symbol_map_size": 0,
+                }
 
         # Check WebSocket status
         if hasattr(connector, '_orderbook_ds') and connector._orderbook_ds:
