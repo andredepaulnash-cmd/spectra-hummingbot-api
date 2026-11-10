@@ -1863,7 +1863,9 @@ class UnifiedConnectorService:
                     "symbol_map_size": len(symbol_map) if symbol_map is not None else 0,
                     "supported_pairs_sample": list(symbol_map.values())[:20] if symbol_map else [],
                     "shares_order_book_tracker_with_paper": (
-                        data_tracker is not None and data_tracker is tracker
+                        type(connector).__name__ == "PaperTradeExchange"
+                        and data_tracker is not None
+                        and data_tracker is tracker
                     ),
                     "websocket_status": (
                         "connected"
