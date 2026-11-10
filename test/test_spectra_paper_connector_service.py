@@ -482,9 +482,11 @@ def test_paper_order_book_diagnostics_include_underlying_public_connector():
         _trading_pairs=[],
         order_books={},
     )
-    paper_connector = SimpleNamespace(
-        order_book_tracker=tracker,
-    )
+    class PaperTradeExchange:
+        def __init__(self, order_book_tracker):
+            self.order_book_tracker = order_book_tracker
+
+    paper_connector = PaperTradeExchange(tracker)
     public_connector = SimpleNamespace(
         name="kraken",
         _trading_pairs=[],
