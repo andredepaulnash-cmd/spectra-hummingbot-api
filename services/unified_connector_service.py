@@ -73,6 +73,8 @@ class UnifiedConnectorService:
         # Data-only connectors: connector_name -> ConnectorBase (shared, non-authenticated)
         self._data_connectors: Dict[str, ConnectorBase] = {}
         self._data_connectors_started: Dict[str, bool] = {}
+        # Last startup failure per public connector, exposed through read-only diagnostics.
+        self._data_connector_start_errors: Dict[str, str] = {}
 
         # Order and funding recorders (for trading connectors)
         self._orders_recorders: Dict[str, Any] = {}
@@ -249,6 +251,7 @@ class UnifiedConnectorService:
             return True
 
         connector = self.get_data_connector(connector_name)
+        self._data_connector_start_errors.pop(connector_name, None)
 
         try:
             # Add trading pair before starting network
@@ -269,6 +272,7 @@ class UnifiedConnectorService:
             while waited < max_wait:
                 if tracker.ready:
                     self._data_connectors_started[connector_name] = True
+                    self._data_connector_start_errors.pop(connector_name, None)
                     logger.info(
                         "Order book tracker ready for %s with pair %s",
                         connector_name,
@@ -278,6 +282,9 @@ class UnifiedConnectorService:
                 await asyncio.sleep(0.5)
                 waited += 0.5
 
+            self._data_connector_start_errors[connector_name] = (
+                f"TimeoutError: order book tracker did not become ready within {max_wait:.1f}s"
+            )
             logger.error(
                 "Order book tracker for %s did not become ready within %.1fs",
                 connector_name,
@@ -291,7 +298,19 @@ class UnifiedConnectorService:
             return False
 
         except Exception as e:
-            logger.error(f"Error starting data connector {connector_name}: {e}")
+            self._data_connector_start_errors[connector_name] = (
+                f"{type(e).__name__}: {e}"
+            )[:1000]
+            logger.exception("Error starting data connector %s", connector_name)
+            # start_network() can fail after allocating tracker/WebSocket tasks.
+            # Always attempt to stop partial startup before rolling back the pair.
+            try:
+                await connector.stop_network()
+            except Exception:
+                logger.exception(
+                    "Cleanup after failed data connector startup also failed for %s",
+                    connector_name,
+                )
             self._purge_trading_pair_registration(connector, trading_pair)
             return False
 
@@ -1855,6 +1874,7 @@ class UnifiedConnectorService:
                     "connector_type": type(data_connector).__name__,
                     "connector_name": getattr(data_connector, "name", connector_name.removesuffix("_paper_trade")),
                     "network_started": self._data_connectors_started.get(connector_name, False),
+                    "startup_error": self._data_connector_start_errors.get(connector_name),
                     "has_order_book_tracker": data_tracker is not None,
                     "tracker_ready": bool(getattr(data_tracker, "ready", False)),
                     "connector_trading_pairs": list(getattr(data_connector, "_trading_pairs", []) or []),
