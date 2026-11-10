@@ -498,6 +498,7 @@ def test_paper_order_book_diagnostics_include_underlying_public_connector():
     service.get_best_connector_for_market = lambda *_args: paper_connector
     service._data_connectors = {"kraken_paper_trade": public_connector}
     service._data_connectors_started = {"kraken_paper_trade": False}
+    service._data_connector_start_errors = {"kraken_paper_trade": None}
 
     diagnostics = service.get_order_book_tracker_diagnostics(
         "kraken_paper_trade"
@@ -507,6 +508,44 @@ def test_paper_order_book_diagnostics_include_underlying_public_connector():
     assert public["connector_type"] == "SimpleNamespace"
     assert public["connector_name"] == "kraken"
     assert public["network_started"] is False
+    assert public["startup_error"] is None
     assert public["symbol_map_initialized"] is False
     assert public["symbol_map_size"] == 0
     assert public["shares_order_book_tracker_with_paper"] is True
+
+
+@pytest.mark.asyncio
+async def test_data_connector_start_exception_is_preserved_and_partial_start_is_stopped():
+    from types import SimpleNamespace
+
+    class FailingPublicConnector:
+        name = "kraken"
+
+        def __init__(self):
+            self._trading_pairs = []
+            self.order_book_tracker = SimpleNamespace(_trading_pairs=[], ready=False)
+            self.stopped = False
+
+        async def start_network(self):
+            raise RuntimeError("public websocket startup failed")
+
+        async def stop_network(self):
+            self.stopped = True
+
+    connector = FailingPublicConnector()
+    service = UnifiedConnectorService.__new__(UnifiedConnectorService)
+    service._data_connectors = {"kraken_paper_trade": connector}
+    service._data_connectors_started = {}
+    service._data_connector_start_errors = {}
+
+    result = await service.ensure_data_connector_started(
+        "kraken_paper_trade", "BTC-USD"
+    )
+
+    assert result is False
+    assert connector.stopped is True
+    assert service._data_connector_start_errors["kraken_paper_trade"] == (
+        "RuntimeError: public websocket startup failed"
+    )
+    assert "BTC-USD" not in connector._trading_pairs
+    assert "BTC-USD" not in connector.order_book_tracker._trading_pairs
