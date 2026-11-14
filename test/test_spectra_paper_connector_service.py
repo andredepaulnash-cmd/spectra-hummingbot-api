@@ -200,6 +200,9 @@ async def test_native_paper_adapter_skips_exchange_py_base_startup_lifecycle(mon
     connector = NativePaperAdapter()
     service = UnifiedConnectorService.__new__(UnifiedConnectorService)
     service._create_trading_connector = lambda _account, _name: connector
+    service._paper_trade_clock = None
+    service._paper_trade_clock_task = None
+    service._paper_trade_clock_lock = asyncio.Lock()
     service.db_manager = None
     service._metrics_collectors = {}
     service._rate_provider = None
