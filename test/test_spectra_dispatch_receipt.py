@@ -43,7 +43,7 @@ def _token(
         "receipt_id": "receipt_" + "a" * 32,
         "proposal_id": "proposal-123",
         "intent": intent,
-        "account_name": "paper-account",
+        "account_name": body.get("account_name", "paper-account"),
         "connector_name": connector_name,
         "trading_pair": trading_pair,
         "operation": operation,
