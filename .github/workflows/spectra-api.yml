@@ -367,23 +367,30 @@ jobs:
           }
 
           def request(path, payload=None, receipt=None):
-              command = ["curl", "-fsS", "-u", auth, "-H", "Content-Type: application/json"]
+              command = ["curl", "-sS", "-u", auth, "-H", "Content-Type: application/json"]
               if receipt:
                   command += ["-H", "X-Spectra-Dispatch-Receipt: " + receipt]
               if payload is not None:
                   command += ["-d", json.dumps(payload, separators=(",", ":"))]
-              command += ["http://127.0.0.1:8000" + path]
+              command += ["-w", "\\n__SPECTRA_HTTP_STATUS__:%{http_code}", "http://127.0.0.1:8000" + path]
               completed = subprocess.run(command, text=True, capture_output=True)
               if completed.returncode:
                   raise RuntimeError(
-                      f"HTTP request failed for {path} (curl exit {completed.returncode})\\n"
+                      f"Transport failed for {path} (curl exit {completed.returncode})\\n"
                       f"response body: {completed.stdout}\\n"
                       f"curl stderr: {completed.stderr}"
                   )
+              marker = "\\n__SPECTRA_HTTP_STATUS__:"
+              if marker not in completed.stdout:
+                  raise RuntimeError(f"Missing HTTP status for {path}: {completed.stdout!r}")
+              response_body, status_text = completed.stdout.rsplit(marker, 1)
+              status = int(status_text.strip())
+              if status >= 400:
+                  raise RuntimeError(f"HTTP {status} from {path}: {response_body}")
               try:
-                  return json.loads(completed.stdout)
+                  return json.loads(response_body)
               except json.JSONDecodeError as exc:
-                  raise RuntimeError(f"Invalid JSON from {path}: {completed.stdout!r}") from exc
+                  raise RuntimeError(f"Invalid JSON from {path}: {response_body!r}") from exc
 
           portfolio_filter = {
               "account_names": ["master_account"],
