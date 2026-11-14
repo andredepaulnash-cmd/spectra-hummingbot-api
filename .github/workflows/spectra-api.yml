@@ -372,15 +372,14 @@ jobs:
                   command += ["-H", "X-Spectra-Dispatch-Receipt: " + receipt]
               if payload is not None:
                   command += ["-d", json.dumps(payload, separators=(",", ":"))]
-              command += ["-w", "\\n__SPECTRA_HTTP_STATUS__:%{http_code}", "http://127.0.0.1:8000" + path]
+              command += ["-w", "__SPECTRA_HTTP_STATUS__:%{http_code}", "http://127.0.0.1:8000" + path]
               completed = subprocess.run(command, text=True, capture_output=True)
               if completed.returncode:
                   raise RuntimeError(
-                      f"Transport failed for {path} (curl exit {completed.returncode})\\n"
-                      f"response body: {completed.stdout}\\n"
-                      f"curl stderr: {completed.stderr}"
+                      f"Transport failed for {path} (curl exit {completed.returncode}): "
+                      f"{completed.stderr}"
                   )
-              marker = "\\n__SPECTRA_HTTP_STATUS__:"
+              marker = "__SPECTRA_HTTP_STATUS__:"
               if marker not in completed.stdout:
                   raise RuntimeError(f"Missing HTTP status for {path}: {completed.stdout!r}")
               response_body, status_text = completed.stdout.rsplit(marker, 1)
