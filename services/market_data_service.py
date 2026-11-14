@@ -100,6 +100,11 @@ class MarketDataService:
         # price dict used by the cross-rate finder. External (e.g. blockchain/Gateway) prices
         # are kept separately so the periodic ticker rebuild never wipes them.
         self._tickers: Dict[str, Dict[str, Ticker]] = {}
+        # Paper execution connectors expose real prices through their keyless base-exchange
+        # data connector. Keep those reads separate so they never enter the shared cross-rate
+        # pool or get mistaken for a trading venue.
+        self._paper_tickers: Dict[str, Dict[str, Ticker]] = {}
+        self._paper_ticker_updated_at: Dict[str, float] = {}
         self._prices: Dict[str, Decimal] = {}
         self._external_prices: Dict[str, Decimal] = {}
 
@@ -165,6 +170,8 @@ class MarketDataService:
         self._last_access_times.clear()
         self._feed_configs.clear()
         self._tickers.clear()
+        self._paper_tickers.clear()
+        self._paper_ticker_updated_at.clear()
         self._prices.clear()
         self._ticker_updated_at.clear()
         self._ticker_requests.clear()
@@ -791,6 +798,54 @@ class MarketDataService:
         if not self._connector_service.is_known_connector(connector_name):
             raise UnknownConnectorError(f"Connector {connector_name} not found")
 
+        max_age = self._ticker_max_age if max_age is None else max_age
+
+        # A paper connector is an execution identity, not a market-data venue. Its market
+        # prices must nevertheless be readable by the dashboard from the matching keyless
+        # public exchange connector. Cache these separately: paper data must never enter the
+        # shared cross-rate pool, which deliberately excludes paper/test connectors.
+        if is_paper_trade_connector_name(connector_name):
+            self._ticker_requests[connector_name] = time.time()
+            cached = self._paper_tickers.get(connector_name)
+            updated_at = self._paper_ticker_updated_at.get(connector_name, 0.0)
+            if cached and not force and time.time() - updated_at <= max_age:
+                return cached
+
+            lock = self._ticker_locks.setdefault(connector_name, asyncio.Lock())
+            async with lock:
+                cached = self._paper_tickers.get(connector_name)
+                updated_at = self._paper_ticker_updated_at.get(connector_name, 0.0)
+                if cached and not force and time.time() - updated_at <= max_age:
+                    return cached
+
+                base_connector_name = connector_name.lower().removesuffix("_paper_trade")
+                try:
+                    connector = self._connector_service.get_data_connector(connector_name)
+                except UnknownConnectorError:
+                    raise
+                except Exception as e:
+                    raise TickerUnsupportedError(
+                        f"'{connector_name}' public data connector could not be created: "
+                        f"{type(e).__name__}: {e}"
+                    ) from e
+                if connector is None:
+                    raise TickerFetchError(
+                        f"No public data connector available for '{connector_name}'"
+                    )
+
+                tickers = await fetch_tickers(
+                    connector, base_connector_name, raise_on_error=True
+                )
+                self._paper_tickers[connector_name] = tickers
+                self._paper_ticker_updated_at[connector_name] = time.time()
+                logger.info(
+                    "On-demand public ticker fetch for paper connector '%s' via '%s': %s pairs",
+                    connector_name,
+                    base_connector_name,
+                    len(tickers),
+                )
+                return tickers
+
         # Refused rather than merely skipped during collection: serving them here would cache
         # the result and pull it into the price pool through _rebuild_price_pool.
         if not is_market_data_connector(connector_name):
@@ -801,7 +856,6 @@ class MarketDataService:
 
         # Mark the connector as actively requested so the background loop keeps it warm.
         self._ticker_requests[connector_name] = time.time()
-        max_age = self._ticker_max_age if max_age is None else max_age
 
         if not force and self._is_ticker_fresh(connector_name, max_age):
             return self._tickers[connector_name]
@@ -885,7 +939,9 @@ class MarketDataService:
 
     def ticker_updated_at(self, connector_name: str) -> Optional[float]:
         """Timestamp of the last successful ticker fetch for a connector, or None."""
-        return self._ticker_updated_at.get(connector_name)
+        return self._paper_ticker_updated_at.get(
+            connector_name, self._ticker_updated_at.get(connector_name)
+        )
 
     def _connected_connector_names(self) -> List[str]:
         """Unique connector names to collect tickers for.
