@@ -188,6 +188,7 @@ jobs:
             exit 1
           }
           API_PASS="$(python -c 'from pathlib import Path; print(next(x.split("=",1)[1] for x in Path(".env").read_text().splitlines() if x.startswith("PASSWORD=")))')"
+          echo "::add-mask::spectra_alpha:$API_PASS"
           echo "API_AUTH=spectra_alpha:$API_PASS" >> "$GITHUB_ENV"
       - name: Wait for authenticated paper API
         shell: bash
