@@ -1031,7 +1031,7 @@ class AccountsService:
         if notional_size < min_notional_size:
             raise HTTPException(
                 status_code=400,
-                detail=f"Order notional value {notional_size} is below minimum notional size {trading_rule.min_notional_size} for {trading_pair}. "
+                detail=f"Order notional value {notional_size} is below minimum notional size {min_notional_size} for {trading_pair}. "
                        f"Increase the amount or price to meet the minimum requirement."
             )
         
