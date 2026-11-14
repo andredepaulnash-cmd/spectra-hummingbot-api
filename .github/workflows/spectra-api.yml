@@ -333,7 +333,7 @@ jobs:
           set -a
           source "$RUNNER_TEMP/spectra-core.env"
           set +a
-          export PYTHONPATH="$PWD/spectra-core:$PYTHONPATH"
+          export PYTHONPATH="$PWD/spectra-core:${PYTHONPATH:-}"
           python - <<'PY'
           import base64
           import json
