@@ -1,4 +1,5 @@
 import asyncio
+import math
 
 import pytest
 from hummingbot.core.time_iterator import TimeIterator
@@ -15,7 +16,14 @@ async def test_managed_paper_trade_clock_ticks_and_stops_cleanly():
 
     iterator = TimeIterator()
     await service._start_paper_trade_clock(iterator)
-    first_tick = iterator.current_timestamp
+    # TimeIterator starts at NaN; wait for the managed realtime clock's
+    # first tick before comparing subsequent progress.
+    for _ in range(50):
+        first_tick = iterator.current_timestamp
+        if math.isfinite(first_tick):
+            break
+        await asyncio.sleep(0.1)
+    assert math.isfinite(first_tick), "paper clock never produced its first tick"
 
     await asyncio.sleep(2.2)
 
