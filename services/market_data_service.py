@@ -753,15 +753,20 @@ class MarketDataService:
         return self._prices
 
     def get_tickers(self) -> Dict[str, Dict[str, Ticker]]:
-        """Get the collected ticker pool, as ``{connector: {trading_pair: Ticker}}``."""
-        return self._tickers
+        """Get public ticker snapshots, including paper-mode venues.
+
+        Paper tickers are exposed to the dashboard under their paper connector
+        identity, but remain separate from the shared cross-rate price pool.
+        """
+        return {**self._tickers, **self._paper_tickers}
 
     def get_rate_for_connector(
             self, connector_name: str, base: str, quote: Optional[str] = None
     ) -> Optional[Decimal]:
         """Resolve a rate using only a single connector's tickers (no cross-exchange merge)."""
         quote = quote or self._quote_token
-        connector_prices = {pair: t.price for pair, t in self._tickers.get(connector_name, {}).items()}
+        source = self._paper_tickers if is_paper_trade_connector_name(connector_name) else self._tickers
+        connector_prices = {pair: t.price for pair, t in source.get(connector_name, {}).items()}
         try:
             return find_rate(connector_prices, combine_to_hb_trading_pair(base=base, quote=quote))
         except Exception:
@@ -964,7 +969,12 @@ class MarketDataService:
             if last_request is None or now - last_request <= self._ticker_subscription_ttl:
                 names.add(name)
 
-        return [n for n in names if is_market_data_connector(n)]
+        # Paper connectors need the same public ticker refresh as live venues, but
+        # their prices are kept in a separate cache and never enter cross-rate valuation.
+        return [
+            n for n in names
+            if is_market_data_connector(n) or is_paper_trade_connector_name(n)
+        ]
 
     async def _collect_all_tickers(self):
         """Fetch tickers from every connected exchange concurrently and rebuild the price pool."""
@@ -974,12 +984,19 @@ class MarketDataService:
         for stale in [n for n in self._tickers if n not in connector_names]:
             self._tickers.pop(stale, None)
             self._ticker_updated_at.pop(stale, None)
+        for stale in [n for n in self._paper_tickers if n not in connector_names]:
+            self._paper_tickers.pop(stale, None)
+            self._paper_ticker_updated_at.pop(stale, None)
 
         if not connector_names:
             self._rebuild_price_pool()
             return
 
         async def _fetch(name: str) -> Tuple[str, Dict[str, Ticker]]:
+            if is_paper_trade_connector_name(name):
+                # Paper execution identities fetch through their keyless base-exchange
+                # adapter. Keep that cache separate from real-venue valuation data.
+                return name, await self.fetch_connector_tickers(name, force=True)
             connector = self._connector_service.get_best_connector_for_market(name)
             if connector is None:
                 return name, {}
@@ -996,8 +1013,12 @@ class MarketDataService:
                 continue
             name, tickers = result
             if tickers:
-                self._tickers[name] = tickers
-                self._ticker_updated_at[name] = now
+                if is_paper_trade_connector_name(name):
+                    self._paper_tickers[name] = tickers
+                    self._paper_ticker_updated_at[name] = now
+                else:
+                    self._tickers[name] = tickers
+                    self._ticker_updated_at[name] = now
 
         self._rebuild_price_pool()
 

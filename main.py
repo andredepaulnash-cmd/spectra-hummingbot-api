@@ -385,9 +385,13 @@ async def lifespan(app: FastAPI):
             )
         await connector_service.reconcile_active_orders()
 
+        # Keep the dashboard's public market-data feed alive in paper mode too.
+        # Paper tickers are cached separately from live-venue valuation prices.
+        market_data_service.start()
+        await market_data_service.warmup_tickers()
+
         # The executor control loop is safe only after connector-level paper
-        # enforcement is active. Do not start bots/MQTT, Gateway, Docker, or
-        # background market-data feeds; paper connectors own their public feed.
+        # enforcement is active. Do not start bots/MQTT, Gateway, or Docker.
         executor_service.start()
         await executor_service.recover_positions_from_db()
         accounts_service.start()
@@ -449,9 +453,9 @@ async def lifespan(app: FastAPI):
     await accounts_service.stop()
     await executor_service.stop()
     await connector_service.stop_all()
+    market_data_service.stop()
     if not SPECTRA_PAPER_ONLY:
         await bots_orchestrator.stop()
-        market_data_service.stop()
         GatewayHttpClient.get_instance().stop_monitor()
         docker_service.cleanup()
     await db_manager.close()

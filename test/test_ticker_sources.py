@@ -525,7 +525,7 @@ async def test_testnet_request_is_refused_and_never_enters_the_pool(monkeypatch)
     assert service.prices == {}
 
 
-def test_collection_set_skips_paper_trade_and_testnet(monkeypatch):
+def test_collection_set_includes_paper_but_skips_testnet(monkeypatch):
     from services import market_data_service as mds
 
     service = mds.MarketDataService(connector_service=StubConnectorService())
@@ -533,7 +533,9 @@ def test_collection_set_skips_paper_trade_and_testnet(monkeypatch):
         "binance": object(), "bybit_testnet": object(),
         "binance_paper_trade": object(), "okx": object(),
     }
-    assert sorted(service._connected_connector_names()) == ["binance", "okx"]
+    names = sorted(service._connected_connector_names())
+    assert names == ["binance", "binance_paper_trade", "okx"]
+    assert not any("testnet" in name or "sandbox" in name for name in names)
 
 
 @pytest.mark.asyncio

@@ -611,3 +611,66 @@ async def test_paper_connector_tickers_use_public_base_connector_without_polluti
     assert calls == ["kraken_paper_trade"]
     assert service._tickers == {}
     assert service.ticker_updated_at("kraken_paper_trade") is not None
+
+
+
+@pytest.mark.asyncio
+async def test_paper_tickers_are_collected_for_dashboard_without_entering_price_pool(
+    monkeypatch,
+):
+    from decimal import Decimal
+    from unittest.mock import AsyncMock
+
+    from services import market_data_service as module
+    from services.market_data_service import MarketDataService, Ticker
+
+    expected = {
+        "BTC-USD": Ticker(
+            price=Decimal("65000"),
+            base_volume=Decimal("10"),
+            quote_volume=Decimal("650000"),
+            timestamp=123.0,
+        )
+    }
+    public_connector = object()
+
+    class FakeConnectorService:
+        _data_connectors = {}
+
+        def get_all_trading_connectors(self):
+            return {"master_account": {"kraken_paper_trade": object()}}
+
+        def is_known_connector(self, name):
+            return name == "kraken_paper_trade"
+
+        def get_data_connector(self, name):
+            assert name == "kraken_paper_trade"
+            return public_connector
+
+        def get_best_connector_for_market(self, *_args, **_kwargs):
+            pytest.fail("paper ticker collection must use the keyless base connector")
+
+    service = MarketDataService.__new__(MarketDataService)
+    service._connector_service = FakeConnectorService()
+    service._ticker_max_age = 60
+    service._ticker_subscription_ttl = 600
+    service._ticker_requests = {}
+    service._ticker_locks = {}
+    service._paper_tickers = {}
+    service._paper_ticker_updated_at = {}
+    service._tickers = {}
+    service._ticker_updated_at = {}
+    service._prices = {}
+    service._external_prices = {}
+
+    fetch = AsyncMock(return_value=expected)
+    monkeypatch.setattr(module, "fetch_tickers", fetch)
+
+    await service._collect_all_tickers()
+
+    assert service.get_tickers() == {"kraken_paper_trade": expected}
+    assert service.prices == {}
+    assert service.ticker_updated_at("kraken_paper_trade") is not None
+    fetch.assert_awaited_once_with(
+        public_connector, "kraken", raise_on_error=True
+    )
