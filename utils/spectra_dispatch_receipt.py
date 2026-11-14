@@ -188,6 +188,42 @@ def verify_and_consume_receipt(
         expected_config_hash = canonical_body_sha256({"executor_id": executor_id})
         if payload.get("config_sha256") != expected_config_hash:
             raise SpectraDispatchReceiptError("Executor stop receipt identity digest does not match")
+    elif operation == "place_trade":
+        if expected_method != "POST" or expected_path != "/trading/orders":
+            raise SpectraDispatchReceiptError("Paper trade receipt must target POST /trading/orders")
+        if not isinstance(body, dict):
+            raise SpectraDispatchReceiptError("Paper trade receipt requires an object body")
+        required_trade_fields = ("account_name", "connector_name", "trading_pair", "trade_type", "amount", "order_type", "position_action")
+        if any(body.get(field) in (None, "") for field in required_trade_fields):
+            raise SpectraDispatchReceiptError("Paper trade receipt is missing required order fields")
+        if not isinstance(body.get("amount"), (str, int, float)) or isinstance(body.get("amount"), bool):
+            raise SpectraDispatchReceiptError("Paper trade amount is invalid")
+        try:
+            trade_amount = Decimal(str(body["amount"]))
+        except (InvalidOperation, ValueError) as exc:
+            raise SpectraDispatchReceiptError("Paper trade amount is invalid") from exc
+        if not trade_amount.is_finite() or trade_amount <= 0:
+            raise SpectraDispatchReceiptError("Paper trade amount must be positive")
+        connector = str(body["connector_name"]).strip().lower()
+        if not connector.endswith("_paper_trade"):
+            raise SpectraDispatchReceiptError("Direct trade receipts are restricted to paper-trade connectors")
+        if body["trade_type"] not in {"BUY", "SELL"} or body["order_type"] not in {"LIMIT", "MARKET", "LIMIT_MAKER"}:
+            raise SpectraDispatchReceiptError("Paper trade side or order type is unsupported")
+        if body["order_type"] in {"LIMIT", "LIMIT_MAKER"} and body.get("price") is None:
+            raise SpectraDispatchReceiptError("Paper limit trade receipt requires a price")
+        expected_scope = {
+            key: body.get(key)
+            for key in ("account_name", "connector_name", "trading_pair", "trade_type", "amount", "order_type", "price", "position_action")
+        }
+        expected_config_hash = canonical_body_sha256(expected_scope)
+        if payload.get("config_sha256") != expected_config_hash:
+            raise SpectraDispatchReceiptError("Paper trade receipt order scope digest does not match")
+        if (
+            str(body["account_name"]) != payload.get("account_name")
+            or connector != payload.get("connector_name")
+            or str(body["trading_pair"]) != payload.get("trading_pair")
+        ):
+            raise SpectraDispatchReceiptError("Paper trade receipt account, connector, or market scope does not match")
     else:
         raise SpectraDispatchReceiptError("Spectra dispatch receipt operation is unsupported")
 
