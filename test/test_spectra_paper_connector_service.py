@@ -43,7 +43,7 @@ def test_data_connector_creation_rejects_live_connector(monkeypatch):
     )
 
 
-def test_available_credentials_are_filtered_to_paper_connectors(monkeypatch):
+def test_available_credentials_include_exchange_credentials_in_paper_mode(monkeypatch):
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
     monkeypatch.setattr(
         "services.unified_connector_service.fs_util.list_files",
@@ -56,8 +56,10 @@ def test_available_credentials_are_filtered_to_paper_connectors(monkeypatch):
     )
     service = UnifiedConnectorService.__new__(UnifiedConnectorService)
     assert service.list_available_credentials("paper-account") == [
+        "kraken",
         "kraken_paper_trade",
         "binance_paper_trade",
+        "kraken_perpetual",
     ]
 
 

@@ -17,6 +17,7 @@ from services.gateway_wallet_service import GatewayWalletService, balance_entry
 from services.perpetual_trading_service import PerpetualTradingService
 from services.portfolio_analytics_service import PortfolioAnalyticsService
 from utils.file_system import fs_util
+from utils.spectra_paper_guard import is_paper_trade_connector_name, paper_only_enabled
 from utils.gateway_certs import build_client_ssl_context
 
 # Create module-specific logger
@@ -608,6 +609,10 @@ class AccountsService:
         """
         validate_safe_name(account_name, "account name")
         validate_safe_name(connector_name, "connector name")
+        if paper_only_enabled() and not is_paper_trade_connector_name(connector_name):
+            # Storage-only: no live connector initialization or exchange connection.
+            await self._connector_service.store_connector_credentials(account_name, connector_name, credentials)
+            return
 
         # Capture the original credential file BEFORE the in-place overwrite performed by
         # update_connector_keys. This determines whether a failure is a brand-new CREATE

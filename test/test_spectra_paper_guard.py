@@ -101,11 +101,13 @@ def test_paper_connector_config_rejects_nonempty_secrets(monkeypatch):
             "kraken_paper_trade",
             {"api_key": "not-a-real-key"},
         )
-    with pytest.raises(ValueError, match="paper-only mode"):
-        validate_paper_connector_configuration(
-            "kraken",
-            {"api_key": ""},
-        )
+    validate_paper_connector_configuration(
+        "kraken",
+        {"api_key": "test-key", "secret_key": "test-secret"},
+    )
+    assert not should_block_paper_mutation(
+        "POST", "/accounts/add-credential/master_account/kraken"
+    )
 
 
 def test_api_defaults_to_paper_only(monkeypatch):

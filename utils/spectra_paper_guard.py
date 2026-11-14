@@ -21,7 +21,7 @@ _PAPER_POST_PATTERNS = tuple(
     for pattern in (
         r"/executors/search",
         r"/accounts/add-account",
-        r"/accounts/add-credential/[^/]+/[^/]+_paper_trade",
+        r"/accounts/add-credential/[^/]+/[^/]+",
         r"/executors/?",
         r"/executors/[^/]+/stop",
         r"/trading/orders",
@@ -92,7 +92,10 @@ def validate_paper_connector_configuration(
     """Permit only paper connector configs with no exchange/wallet secrets."""
     if not paper_only_enabled():
         return
-    require_paper_trade_connector(connector_name)
+    # Real exchange credentials may be stored in paper mode, but never create
+    # an order-capable connector. Paper adapters themselves remain keyless.
+    if not is_paper_trade_connector_name(connector_name):
+        return
     sensitive_markers = (
         "api_key", "secret", "password", "private_key", "mnemonic", "seed",
     )

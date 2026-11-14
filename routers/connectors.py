@@ -26,8 +26,8 @@ async def available_connectors():
     all_connectors = AllConnectorSettings.get_connector_settings().keys()
     # Filter out DEX providers (contain '/') - these are accessed via Gateway networks.
     connectors = [c for c in all_connectors if '/' not in c]
-    if paper_only_enabled():
-        connectors = [c for c in connectors if is_paper_trade_connector_name(c)]
+    # Real exchanges must remain selectable for credential setup in paper mode.
+    # Trading services independently enforce the *_paper_trade execution boundary.
     return connectors
 
 
@@ -47,7 +47,8 @@ async def get_connector_config_map(connector_name: str, accounts_service: Accoun
         - allowed_values: List of accepted values (only for Literal fields)
         - prompt: Human readable prompt from the Hummingbot config map (when defined)
     """
-    require_paper_trade_connector(connector_name)
+    if connector_name not in AllConnectorSettings.get_connector_settings():
+        raise HTTPException(status_code=404, detail=f"Unknown exchange connector: {connector_name}")
     return accounts_service.get_connector_config_map(connector_name)
 
 

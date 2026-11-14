@@ -1562,6 +1562,29 @@ class UnifiedConnectorService:
     # Credentials and Configuration
     # =========================================================================
 
+    async def store_connector_credentials(
+        self,
+        account_name: str,
+        connector_name: str,
+        keys: dict
+    ) -> None:
+        """Encrypt and persist exchange credentials without creating a connector."""
+        if connector_name not in self._conn_settings:
+            raise UnknownConnectorError(f"Unknown exchange connector: {connector_name}")
+        if is_paper_trade_connector_name(connector_name):
+            raise ValueError("Paper-trade adapters do not accept exchange credentials")
+        if not BackendAPISecurity.login_account(account_name=account_name, secrets_manager=self.secrets_manager):
+            raise ValueError(f"Failed to authenticate for {account_name}")
+        connector_config = HummingbotAPIConfigAdapter(
+            AllConnectorSettings.get_connector_config_keys(connector_name)
+        )
+        for key, value in keys.items():
+            if key not in connector_config.hb_config.model_fields:
+                raise ValueError(f"Unknown credential field: {key}")
+            setattr(connector_config, key, value)
+        BackendAPISecurity.update_connector_keys(account_name, connector_config)
+        BackendAPISecurity.decrypt_all(account_name=account_name)
+
     async def update_connector_keys(
         self,
         account_name: str,
@@ -1616,11 +1639,7 @@ class UnifiedConnectorService:
             connector_names = [
                 f.replace(".yml", "") for f in files if f.endswith(".yml")
             ]
-            if paper_only_enabled():
-                connector_names = [
-                    name for name in connector_names
-                    if is_paper_trade_connector_name(name)
-                ]
+            # Real-exchange credentials may be stored without authorizing execution.
             return connector_names
         except FileNotFoundError:
             return []
