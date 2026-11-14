@@ -330,6 +330,15 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          dump_paper_api_logs() {
+            result=$?
+            if [[ "$result" -ne 0 ]]; then
+              echo "### Paper API logs after signed order failure"
+              docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --no-color --tail=240 || true
+            fi
+            return "$result"
+          }
+          trap dump_paper_api_logs EXIT
           set -a
           source "$RUNNER_TEMP/spectra-core.env"
           set +a
@@ -364,7 +373,17 @@ jobs:
               if payload is not None:
                   command += ["-d", json.dumps(payload, separators=(",", ":"))]
               command += ["http://127.0.0.1:8000" + path]
-              return json.loads(subprocess.check_output(command, text=True))
+              completed = subprocess.run(command, text=True, capture_output=True)
+              if completed.returncode:
+                  raise RuntimeError(
+                      f"HTTP request failed for {path} (curl exit {completed.returncode})\\n"
+                      f"response body: {completed.stdout}\\n"
+                      f"curl stderr: {completed.stderr}"
+                  )
+              try:
+                  return json.loads(completed.stdout)
+              except json.JSONDecodeError as exc:
+                  raise RuntimeError(f"Invalid JSON from {path}: {completed.stdout!r}") from exc
 
           portfolio_filter = {
               "account_names": ["master_account"],
