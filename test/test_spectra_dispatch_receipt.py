@@ -31,14 +31,19 @@ def _token(
 ):
     if operation == "create_executor":
         config_hash = receipts.canonical_body_sha256(body["executor_config"])
-    else:
+    elif operation == "stop_executor":
         config_hash = receipts.canonical_body_sha256({"executor_id": executor_id})
+    else:
+        config_hash = receipts.canonical_body_sha256({
+            key: body.get(key)
+            for key in ("account_name", "connector_name", "trading_pair", "trade_type", "amount", "order_type", "price", "position_action")
+        })
     payload = {
         "version": 1,
         "receipt_id": "receipt_" + "a" * 32,
         "proposal_id": "proposal-123",
         "intent": intent,
-        "account_name": "paper-account",
+        "account_name": body.get("account_name", "paper-account"),
         "connector_name": connector_name,
         "trading_pair": trading_pair,
         "operation": operation,
@@ -316,3 +321,70 @@ def test_middleware_authenticates_before_consuming_receipt(monkeypatch, tmp_path
     accepted = asyncio.run(invoke(True))
     assert accepted[0]["status"] == 204
     assert captured == ["proposal-123"]
+
+
+
+def test_paper_trade_receipt_authorizes_exact_paper_order_once(monkeypatch, tmp_path):
+    private = _keypair(monkeypatch)
+    body = {
+        "account_name": "master_account",
+        "connector_name": "kraken_paper_trade",
+        "trading_pair": "BTC-USD",
+        "trade_type": "BUY",
+        "amount": "0.001",
+        "order_type": "MARKET",
+        "price": None,
+        "position_action": "OPEN",
+    }
+    token = _token(
+        private, body, path="/trading/orders", operation="place_trade",
+        connector_name="kraken_paper_trade", trading_pair="BTC-USD",
+        amount="65", intent="ENTRY",
+    )
+    payload = receipts.verify_and_consume_receipt(
+        token, method="POST", path="/trading/orders", body=body,
+        now=1001, db_path=tmp_path / "paper-trades.sqlite3",
+    )
+    assert payload["operation"] == "place_trade"
+    assert payload["connector_name"] == "kraken_paper_trade"
+
+    with pytest.raises(receipts.SpectraDispatchReceiptError, match="already been consumed"):
+        receipts.verify_and_consume_receipt(
+            token, method="POST", path="/trading/orders", body=body,
+            now=1002, db_path=tmp_path / "paper-trades.sqlite3",
+        )
+
+
+def test_paper_trade_receipt_rejects_live_connector_and_changed_order(monkeypatch, tmp_path):
+    private = _keypair(monkeypatch)
+    body = {
+        "account_name": "master_account",
+        "connector_name": "kraken",
+        "trading_pair": "BTC-USD",
+        "trade_type": "BUY",
+        "amount": "0.001",
+        "order_type": "MARKET",
+        "price": None,
+        "position_action": "OPEN",
+    }
+    live_token = _token(
+        private, body, path="/trading/orders", operation="place_trade",
+        connector_name="kraken", trading_pair="BTC-USD", amount="65",
+    )
+    with pytest.raises(receipts.SpectraDispatchReceiptError, match="paper-trade connectors"):
+        receipts.verify_and_consume_receipt(
+            live_token, method="POST", path="/trading/orders", body=body,
+            now=1001, db_path=tmp_path / "live-trade.sqlite3",
+        )
+
+    paper = {**body, "connector_name": "kraken_paper_trade"}
+    token = _token(
+        private, paper, path="/trading/orders", operation="place_trade",
+        connector_name="kraken_paper_trade", trading_pair="BTC-USD", amount="65",
+    )
+    altered = {**paper, "amount": "0.01"}
+    with pytest.raises(receipts.SpectraDispatchReceiptError, match="body digest"):
+        receipts.verify_and_consume_receipt(
+            token, method="POST", path="/trading/orders", body=altered,
+            now=1001, db_path=tmp_path / "altered-trade.sqlite3",
+        )

@@ -2,7 +2,7 @@ import asyncio
 import logging
 import re
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, ROUND_DOWN, ROUND_UP
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -22,6 +22,15 @@ from utils.gateway_certs import build_client_ssl_context
 
 # Create module-specific logger
 logger = logging.getLogger(__name__)
+
+
+def _quantize_to_increment(value: Decimal, increment: Decimal, rounding) -> Decimal:
+    """Quantize a positive value to an exchange-provided increment."""
+    if not value.is_finite() or value <= 0:
+        raise ValueError("Order values must be positive and finite")
+    if not increment.is_finite() or increment <= 0:
+        raise ValueError("Exchange increment must be positive and finite")
+    return (value / increment).to_integral_value(rounding=rounding) * increment
 
 # Safe single path component names: prevents path traversal via '/', '\' or '..'
 SAFE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -908,43 +917,106 @@ class AccountsService:
         if order_type in [OrderType.LIMIT, OrderType.LIMIT_MAKER] and price is None:
             raise HTTPException(status_code=400, detail="Price is required for LIMIT and LIMIT_MAKER orders")
         
-        # Check if trading rules are loaded
-        if not connector.trading_rules:
-            raise HTTPException(
-                status_code=503, 
-                detail=f"Trading rules not yet loaded for {connector_name}. Please try again in a moment."
+        is_paper_trade = is_paper_trade_connector_name(connector_name)
+        if is_paper_trade:
+            # PaperTradeExchange is an ExchangeBase simulator, not ExchangePyBase:
+            # it intentionally has no .trading_rules map. Resolve the venue's
+            # authoritative rules through the keyless public data connector.
+            rules_by_pair = await self._market_data_service.get_trading_rules(
+                connector_name, [trading_pair], account_name
             )
-        
-        # Validate trading pair and get trading rule
-        if trading_pair not in connector.trading_rules:
-            available_pairs = list(connector.trading_rules.keys())[:10]  # Show first 10
-            more_text = f" (and {len(connector.trading_rules) - 10} more)" if len(connector.trading_rules) > 10 else ""
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Trading pair '{trading_pair}' not supported on {connector_name}. "
-                       f"Available pairs: {available_pairs}{more_text}"
+            paper_rule = (
+                rules_by_pair.get(trading_pair)
+                if isinstance(rules_by_pair, dict)
+                else None
             )
-        
-        trading_rule = connector.trading_rules[trading_pair]
-        
+            if not isinstance(paper_rule, dict) or "error" in paper_rule:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        f"Public trading rules are not ready for "
+                        f"{connector_name}/{trading_pair}: "
+                        f"{paper_rule.get('error', 'unavailable') if isinstance(paper_rule, dict) else 'unavailable'}"
+                    ),
+                )
+            try:
+                min_order_size = Decimal(str(paper_rule["min_order_size"]))
+                min_notional_size = max(
+                    Decimal(str(paper_rule.get("min_notional_size") or "0")),
+                    Decimal(str(paper_rule.get("min_order_value") or "0")),
+                )
+                amount_increment = Decimal(str(paper_rule["min_base_amount_increment"]))
+                price_increment = Decimal(str(paper_rule["min_price_increment"]))
+            except (KeyError, InvalidOperation, TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Incomplete public trading rules for {connector_name}/{trading_pair}: {exc}",
+                ) from exc
+
+            if amount_increment <= 0 or price_increment <= 0:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Invalid trading increments for {connector_name}/{trading_pair}",
+                )
+            quantized_amount = _quantize_to_increment(
+                amount, amount_increment, ROUND_DOWN
+            )
+            # The native paper connector applies its own 1e-7 fallback precision.
+            # Apply it before validation so the simulated order matches what it
+            # will actually submit, while retaining the venue's minimum checks.
+            quantized_amount = connector.quantize_order_amount(
+                trading_pair, quantized_amount
+            )
+        else:
+            # Live ExchangePyBase connectors expose their trading rules directly.
+            trading_rules = getattr(connector, "trading_rules", None)
+            if not trading_rules:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Trading rules not yet loaded for {connector_name}. Please try again in a moment.",
+                )
+            if trading_pair not in trading_rules:
+                available_pairs = list(trading_rules.keys())[:10]
+                more_text = f" (and {len(trading_rules) - 10} more)" if len(trading_rules) > 10 else ""
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Trading pair '{trading_pair}' not supported on {connector_name}. "
+                        f"Available pairs: {available_pairs}{more_text}"
+                    ),
+                )
+            trading_rule = trading_rules[trading_pair]
+            min_order_size = trading_rule.min_order_size
+            min_notional_size = trading_rule.min_notional_size
+            quantized_amount = connector.quantize_order_amount(trading_pair, amount)
+
         # Validate order type is supported
-        if order_type not in connector.supported_order_types():
-            supported_types = [ot.name for ot in connector.supported_order_types()]
-            raise HTTPException(status_code=400, detail=f"Order type '{order_type.name}' not supported. Supported types: {supported_types}")
-        
-        # Quantize amount according to trading rules
-        quantized_amount = connector.quantize_order_amount(trading_pair, amount)
-        
-        # Validate minimum order size
-        if quantized_amount < trading_rule.min_order_size:
+        supported_order_types = connector.supported_order_types()
+        if order_type not in supported_order_types:
+            supported_types = [ot.name for ot in supported_order_types]
             raise HTTPException(
-                status_code=400, 
-                detail=f"Order amount {quantized_amount} is below minimum order size {trading_rule.min_order_size} for {trading_pair}"
+                status_code=400,
+                detail=f"Order type '{order_type.name}' not supported. Supported types: {supported_types}",
             )
-        
+
+        # Validate minimum order size after connector-specific quantization.
+        if quantized_amount < min_order_size:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Order amount {quantized_amount} is below minimum order size {min_order_size} for {trading_pair}",
+            )
+
         # Calculate and validate notional size
         if order_type in [OrderType.LIMIT, OrderType.LIMIT_MAKER]:
-            quantized_price = connector.quantize_order_price(trading_pair, price)
+            if is_paper_trade:
+                rounding = ROUND_DOWN if trade_type == TradeType.BUY else ROUND_UP
+                quantized_price = _quantize_to_increment(price, price_increment, rounding)
+                # Keep the paper connector's internal precision from changing
+                # the venue-aligned tick when it receives the order.
+                quantized_price = connector.quantize_order_price(trading_pair, quantized_price)
+            else:
+                quantized_price = connector.quantize_order_price(trading_pair, price)
+            price = quantized_price
             notional_size = quantized_price * quantized_amount
         else:
             # For market orders without price, get current market price for validation
@@ -956,10 +1028,10 @@ class AccountsService:
                 logger.error(f"Error getting market price for {trading_pair}: {e}")
             notional_size = price * quantized_amount if price else Decimal("0")
             
-        if notional_size < trading_rule.min_notional_size:
+        if notional_size < min_notional_size:
             raise HTTPException(
                 status_code=400,
-                detail=f"Order notional value {notional_size} is below minimum notional size {trading_rule.min_notional_size} for {trading_pair}. "
+                detail=f"Order notional value {notional_size} is below minimum notional size {min_notional_size} for {trading_pair}. "
                        f"Increase the amount or price to meet the minimum requirement."
             )
         

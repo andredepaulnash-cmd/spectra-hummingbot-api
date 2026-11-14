@@ -24,6 +24,8 @@ from hummingbot.connector.connector_metrics_collector import TradeVolumeMetricCo
 from hummingbot.connector.exchange_py_base import ExchangePyBase
 from hummingbot.connector.gateway.gateway import Gateway
 from hummingbot.connector.perpetual_derivative_py_base import PerpetualDerivativePyBase
+from hummingbot.core.clock import Clock
+from hummingbot.core.clock_mode import ClockMode
 from hummingbot.core.data_type.common import OrderType, PositionAction, PositionMode, TradeType
 from hummingbot.core.data_type.in_flight_order import InFlightOrder, OrderState
 from hummingbot.core.utils.async_utils import safe_ensure_future
@@ -84,6 +86,13 @@ class UnifiedConnectorService:
         # Locks to prevent race conditions in connector creation
         self._connector_locks: Dict[str, asyncio.Lock] = {}
 
+        # Native PaperTradeExchange requires Hummingbot clock ticks to process
+        # queued market orders and crossed limit orders. One managed realtime
+        # clock advances every paper connector owned by this API process.
+        self._paper_trade_clock: Optional[Clock] = None
+        self._paper_trade_clock_task: Optional[asyncio.Task] = None
+        self._paper_trade_clock_lock = asyncio.Lock()
+
         # Connector settings cache
         self._conn_settings = AllConnectorSettings.get_connector_settings()
 
@@ -94,6 +103,75 @@ class UnifiedConnectorService:
     def set_rate_provider(self, rate_provider):
         """Set the rate provider used by trade-volume telemetry (MarketDataService)."""
         self._rate_provider = rate_provider
+
+    @staticmethod
+    def _on_paper_trade_clock_done(task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error(
+                "Native paper-trade clock stopped unexpectedly: %s",
+                error,
+                exc_info=(type(error), error, error.__traceback__),
+            )
+
+    async def _start_paper_trade_clock(self, connector: ConnectorBase) -> None:
+        """Attach a native PaperTradeExchange to the API's managed realtime clock."""
+        async with self._paper_trade_clock_lock:
+            clock = self._paper_trade_clock
+            task = self._paper_trade_clock_task
+            if clock is None or task is None or task.done():
+                if clock is not None:
+                    try:
+                        clock.__exit__(None, None, None)
+                    except Exception:
+                        logger.exception("Error disposing a stopped paper-trade clock")
+                clock = Clock(ClockMode.REALTIME, tick_size=1.0)
+                clock.__enter__()
+                task = asyncio.create_task(clock.run())
+                task.add_done_callback(self._on_paper_trade_clock_done)
+                self._paper_trade_clock = clock
+                self._paper_trade_clock_task = task
+                logger.info("Started managed Hummingbot realtime clock for paper trading")
+
+            if connector not in clock.child_iterators:
+                clock.add_iterator(connector)
+                logger.info(
+                    "Attached native paper connector %s to Hummingbot realtime clock",
+                    type(connector).__name__,
+                )
+
+    async def _stop_paper_trade_clock(self, connector: Optional[ConnectorBase] = None) -> None:
+        """Detach a paper connector and stop the shared clock when no paper connectors remain."""
+        async with self._paper_trade_clock_lock:
+            clock = self._paper_trade_clock
+            if clock is None:
+                return
+
+            if connector is not None and connector in clock.child_iterators:
+                clock.remove_iterator(connector)
+
+            if connector is not None and clock.child_iterators:
+                return
+
+            task = self._paper_trade_clock_task
+            self._paper_trade_clock = None
+            self._paper_trade_clock_task = None
+
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    logger.exception("Error stopping managed paper-trade clock")
+
+            try:
+                clock.__exit__(None, None, None)
+            except Exception:
+                logger.exception("Error closing managed paper-trade clock")
 
     def _is_perpetual_connector(self, connector: ConnectorBase) -> bool:
         """Check if connector is a perpetual derivative connector.
@@ -873,6 +951,9 @@ class UnifiedConnectorService:
 
         # Initialize metrics
         self._initialize_metrics(connector, account_name, connector_name, cache_key)
+
+        if is_paper_trade:
+            await self._start_paper_trade_clock(connector)
 
         # ExchangePyBase owns polling/user-stream lifecycle. The native paper
         # adapter starts its base exchange order-book tracker lazily when the
@@ -1755,6 +1836,8 @@ class UnifiedConnectorService:
         if account_name in self._trading_connectors:
             connector = self._trading_connectors[account_name].get(connector_name)
             if connector:
+                if is_paper_trade_connector_name(connector_name):
+                    await self._stop_paper_trade_clock(connector)
                 await self._stop_connector_network(connector)
                 del self._trading_connectors[account_name][connector_name]
 
@@ -1766,6 +1849,10 @@ class UnifiedConnectorService:
         for account_name, connectors in list(self._trading_connectors.items()):
             for connector_name in list(connectors.keys()):
                 await self.stop_trading_connector(account_name, connector_name)
+
+        # Ensure no paper clock task survives API shutdown, even if a connector
+        # failed during its individual stop sequence.
+        await self._stop_paper_trade_clock()
 
         # Stop data connectors
         for connector_name, connector in self._data_connectors.items():

@@ -79,7 +79,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: andredepaulnash-cmd/spectra-finance-core
-          ref: alpha/one-command-paper-demo-20261108
+          ref: feat/governed-paper-order-dispatch-20261114
           path: spectra-core
       - name: Prepare paper-only runtime configuration
         shell: bash
@@ -188,6 +188,7 @@ jobs:
             exit 1
           }
           API_PASS="$(python -c 'from pathlib import Path; print(next(x.split("=",1)[1] for x in Path(".env").read_text().splitlines() if x.startswith("PASSWORD=")))')"
+          echo "::add-mask::spectra_alpha:$API_PASS"
           echo "API_AUTH=spectra_alpha:$API_PASS" >> "$GITHUB_ENV"
       - name: Wait for authenticated paper API
         shell: bash
@@ -206,7 +207,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           docker cp test/. spectra-ci-hummingbot-api:/hummingbot-api/test/
-          docker exec spectra-ci-hummingbot-api pytest -q /hummingbot-api/test/test_spectra_paper_connector_service.py /hummingbot-api/test/test_ticker_sources.py /hummingbot-api/test/test_spectra_paper_market_prices.py
+          docker exec spectra-ci-hummingbot-api pytest -q /hummingbot-api/test/test_spectra_paper_connector_service.py /hummingbot-api/test/test_ticker_sources.py /hummingbot-api/test/test_spectra_paper_market_prices.py /hummingbot-api/test/test_accounts_service_paper_trade.py /hummingbot-api/test/test_spectra_paper_trade_clock.py
 
       - name: Verify Kraken paper connector runtime
         shell: bash
@@ -326,6 +327,144 @@ jobs:
           PY
           grep -q 'SPECTRA_PAPER_ONLY=true' .env
           grep -q 'SPECTRA_ALLOW_LIVE_EXECUTION=false' .env
+      - name: Execute and reconcile a Core-signed Kraken paper order
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          dump_paper_api_logs() {
+            result=$?
+            if [[ "$result" -ne 0 ]]; then
+              echo "### Paper API logs after signed order failure"
+              docker compose -p spectra-ci -f docker-compose.alpha-ci.yml logs --no-color --tail=240 || true
+            fi
+            return "$result"
+          }
+          trap dump_paper_api_logs EXIT
+          set -a
+          source "$RUNNER_TEMP/spectra-core.env"
+          set +a
+          export PYTHONPATH="$PWD/spectra-core:${PYTHONPATH:-}"
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import subprocess
+          import time
+          from decimal import Decimal
+          from pathlib import Path
+          from spectra_core.dispatch_receipt import issue_executor_dispatch_receipt
+
+          auth = os.environ["API_AUTH"]
+          api_user, api_password = auth.split(":", 1)
+          body = {
+              "account_name": "master_account",
+              "connector_name": "kraken_paper_trade",
+              "trading_pair": "BTC-USD",
+              "trade_type": "BUY",
+              "amount": "0.0001",
+              "order_type": "MARKET",
+              "price": None,
+              "position_action": "OPEN",
+          }
+
+          def request(path, payload=None, receipt=None):
+              command = ["curl", "-sS", "-u", auth, "-H", "Content-Type: application/json"]
+              if receipt:
+                  command += ["-H", "X-Spectra-Dispatch-Receipt: " + receipt]
+              if payload is not None:
+                  command += ["-d", json.dumps(payload, separators=(",", ":"))]
+              command += ["-w", "__SPECTRA_HTTP_STATUS__:%{http_code}", "http://127.0.0.1:8000" + path]
+              completed = subprocess.run(command, text=True, capture_output=True)
+              if completed.returncode:
+                  raise RuntimeError(
+                      f"Transport failed for {path} (curl exit {completed.returncode}): "
+                      f"{completed.stderr}"
+                  )
+              marker = "__SPECTRA_HTTP_STATUS__:"
+              if marker not in completed.stdout:
+                  raise RuntimeError(f"Missing HTTP status for {path}: {completed.stdout!r}")
+              response_body, status_text = completed.stdout.rsplit(marker, 1)
+              status = int(status_text.strip())
+              if status >= 400:
+                  raise RuntimeError(f"HTTP {status} from {path}: {response_body}")
+              try:
+                  return json.loads(response_body)
+              except json.JSONDecodeError as exc:
+                  raise RuntimeError(f"Invalid JSON from {path}: {response_body!r}") from exc
+
+          portfolio_filter = {
+              "account_names": ["master_account"],
+              "connector_names": ["kraken_paper_trade"],
+              "skip_gateway": True,
+              "refresh": True,
+          }
+          before = request("/portfolio/state", portfolio_filter)
+          before_tokens = before.get("master_account", {}).get("kraken_paper_trade", [])
+          before_balances = {row["token"]: Decimal(str(row["units"])) for row in before_tokens}
+          assert before_balances.get("USD", Decimal("0")) >= Decimal("10"), before
+
+          receipt = issue_executor_dispatch_receipt(
+              request_body=body,
+              proposal_id="ci-paper-order-" + str(int(time.time())),
+              intent="ENTRY",
+              amount_quote="10",
+              now=time.time(),
+              operation="place_trade",
+              method="POST",
+              path="/trading/orders",
+          )
+          order = request("/trading/orders", body, receipt.token)
+          order_id = order.get("order_id")
+          assert order_id, order
+          print("Paper order accepted:", order_id)
+
+          filters = {
+              "account_names": ["master_account"],
+              "connector_names": ["kraken_paper_trade"],
+              "trading_pairs": ["BTC-USD"],
+              "limit": 50,
+          }
+          deadline = time.time() + 90
+          found_order = None
+          found_trade = None
+          after_balances = {}
+          while time.time() < deadline:
+              order_page = request("/trading/orders/search", filters)
+              found_order = next(
+                  (row for row in order_page.get("data", [])
+                   if row.get("order_id") == order_id or row.get("client_order_id") == order_id),
+                  None,
+              )
+              trade_page = request("/trading/trades", filters)
+              found_trade = next(
+                  (row for row in trade_page.get("data", [])
+                   if row.get("order_id") == order_id),
+                  None,
+              )
+              after = request("/portfolio/state", portfolio_filter)
+              rows = after.get("master_account", {}).get("kraken_paper_trade", [])
+              after_balances = {row["token"]: Decimal(str(row["units"])) for row in rows}
+              if found_order and found_order.get("status") == "FILLED" and found_trade:
+                  if (
+                      after_balances.get("BTC", Decimal("0")) > before_balances.get("BTC", Decimal("0"))
+                      and after_balances.get("USD", Decimal("0")) < before_balances.get("USD", Decimal("0"))
+                  ):
+                      break
+              time.sleep(3)
+
+          assert found_order is not None, {"order_id": order_id, "orders": order_page}
+          assert found_order.get("status") == "FILLED", found_order
+          assert found_trade is not None, {"order_id": order_id, "trades": trade_page}
+          assert after_balances.get("BTC", Decimal("0")) > before_balances.get("BTC", Decimal("0")), {
+              "before": before_balances, "after": after_balances
+          }
+          assert after_balances.get("USD", Decimal("0")) < before_balances.get("USD", Decimal("0")), {
+              "before": before_balances, "after": after_balances
+          }
+          print("Verified: signed paper order filled; order/trade history and simulated BTC/USD balances updated.")
+          print("BTC:", before_balances.get("BTC"), "->", after_balances.get("BTC"))
+          print("USD:", before_balances.get("USD"), "->", after_balances.get("USD"))
+          PY
       - name: Stop paper-only API stack
         if: always()
         run: docker compose -p spectra-ci -f docker-compose.alpha-ci.yml down -v || true
