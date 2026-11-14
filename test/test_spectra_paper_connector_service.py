@@ -553,3 +553,61 @@ async def test_data_connector_start_exception_is_preserved_and_partial_start_is_
     )
     assert "BTC-USD" not in connector._trading_pairs
     assert "BTC-USD" not in connector.order_book_tracker._trading_pairs
+
+
+@pytest.mark.asyncio
+async def test_paper_connector_tickers_use_public_base_connector_without_polluting_price_pool(
+    monkeypatch,
+):
+    from decimal import Decimal
+    from unittest.mock import AsyncMock
+
+    from services import market_data_service as module
+    from services.market_data_service import MarketDataService, Ticker
+
+    public_connector = object()
+    calls = []
+    expected = {
+        "BTC-USD": Ticker(
+            price=Decimal("65000"),
+            base_volume=Decimal("10"),
+            quote_volume=Decimal("650000"),
+            timestamp=123.0,
+        )
+    }
+
+    class FakeConnectorService:
+        def is_known_connector(self, name):
+            return name == "kraken_paper_trade"
+
+        def get_data_connector(self, name):
+            calls.append(name)
+            return public_connector
+
+        def get_best_connector_for_market(self, *_args, **_kwargs):
+            pytest.fail("paper ticker reads must use the keyless public data connector")
+
+    service = MarketDataService.__new__(MarketDataService)
+    service._connector_service = FakeConnectorService()
+    service._ticker_max_age = 60
+    service._ticker_requests = {}
+    service._ticker_locks = {}
+    service._paper_tickers = {}
+    service._paper_ticker_updated_at = {}
+    service._tickers = {}
+    service._ticker_updated_at = {}
+
+    fetch = AsyncMock(return_value=expected)
+    monkeypatch.setattr(module, "fetch_tickers", fetch)
+
+    first = await service.fetch_connector_tickers("kraken_paper_trade")
+    second = await service.fetch_connector_tickers("kraken_paper_trade")
+
+    assert first == expected
+    assert second == expected
+    fetch.assert_awaited_once_with(
+        public_connector, "kraken", raise_on_error=True
+    )
+    assert calls == ["kraken_paper_trade"]
+    assert service._tickers == {}
+    assert service.ticker_updated_at("kraken_paper_trade") is not None
