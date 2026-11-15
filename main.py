@@ -464,8 +464,8 @@ async def lifespan(app: FastAPI):
 
 # Initialize FastAPI with metadata and lifespan
 app = FastAPI(
-    title="Hummingbot API",
-    description="API for managing Hummingbot trading instances",
+    title="Spectra Finance API",
+    description="Spectra Finance execution and portfolio API, powered by Hummingbot.",
     version=VERSION,
     lifespan=lifespan,
     redirect_slashes=False,
