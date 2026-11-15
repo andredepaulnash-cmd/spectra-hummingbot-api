@@ -1,6 +1,6 @@
-# Hummingbot API
+# Spectra Finance API
 
-A REST API for managing Hummingbot trading bots across multiple exchanges, with AI assistant integration via MCP.
+Spectra Finance's execution and account API, built on the Hummingbot API service. Hummingbot remains the underlying execution framework; the application and user-facing identity are Spectra Finance.
 
 > **Why we recommend Tailscale for production**
 >
