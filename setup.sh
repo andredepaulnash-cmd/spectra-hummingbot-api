@@ -734,6 +734,12 @@ GATEWAY_PASSPHRASE=$CONFIG_PASSWORD
 # Paths
 BOTS_PATH=$(pwd)
 
+# Spectra execution safety. Kraken paper trading is the default; live execution
+# remains disabled unless an operator separately changes both mode and approval.
+SPECTRA_PAPER_ONLY=${SPECTRA_PAPER_ONLY:-true}
+SPECTRA_PAPER_CONNECTORS=${SPECTRA_PAPER_CONNECTORS:-kraken_paper_trade}
+SPECTRA_ALLOW_LIVE_EXECUTION=${SPECTRA_ALLOW_LIVE_EXECUTION:-false}
+
 # Tailscale
 # TAILSCALE_ENABLED is the switch and keeps its historical meaning.
 # TAILSCALE_MODE says HOW: host = share this machine's existing tailnet node,
@@ -877,9 +883,9 @@ if [ "$TAILSCALE_ENABLED" = true ]; then
     echo "  Mode:           host — port 8000 is served on the tailnet node this machine already has"
     _ts_name="$(tailnet_node_name 2>/dev/null || true)"
     if [ -n "$_ts_name" ]; then
-      echo "  Condor URL:     http://$_ts_name:8000"
+      echo "  Spectra Finance URL:     http://$_ts_name:8000"
     else
-      echo "  Condor URL:     run 'make doctor' after 'make deploy' — it prints this node's name"
+      echo "  Spectra Finance URL:     run 'make doctor' after 'make deploy' — it prints this node's name"
     fi
   else
     echo "  Mode:           sidecar — the API gets a tailnet node of its own"
@@ -890,7 +896,7 @@ if [ "$TAILSCALE_ENABLED" = true ]; then
     # "hummingbot-api" on a tailnet that has one and you get
     # "hummingbot-api-1". Printing the requested name as the URL is how an
     # install ends up pointed at somebody else's machine.
-    echo "  Condor URL:     http://$TAILSCALE_HOSTNAME:8000 — unless that name is already taken on"
+    echo "  Spectra Finance URL:     http://$TAILSCALE_HOSTNAME:8000 — unless that name is already taken on"
     echo "                  your tailnet, in which case this node registers as"
     echo "                  $TAILSCALE_HOSTNAME-1, -2, ... 'make doctor' prints the real one."
   fi
