@@ -31,7 +31,9 @@ With the flag absent or false, the existing non-Spectra API behavior is unchange
 
 ## Hummingbot paper connector configuration
 
-Hummingbot's current paper-trading documentation describes exchange connector names with the `_paper_trade` suffix (for example, `kraken_paper_trade`), configured through `paper_trade.paper_trade_exchanges` in `conf_client.yml`. The documentation lists Binance, KuCoin, Kraken, and Gate.io as enabled by default and describes a separate simulated balance configuration under `paper_trade.paper_trade_account_balance`.
+Spectra's paper runtime uses the native Hummingbot `PaperTradeExchange` wrapper named `kraken_paper_trade`, backed by Kraken public market data and a separate simulated account. The base exchange name `kraken` belongs in `paper_trade.paper_trade_exchanges`; the API connector itself is `kraken_paper_trade`.
+
+The checked-in master-account paper balance is configured as **USD 25,000** in `paper_trade.paper_trade_account_balance`. It is simulated inventory only; the paper connector is keyless and does not submit orders to Kraken. Keep the account balance and the Spectra Core capital policy aligned before starting the fleet.
 
 Reference: https://hummingbot.org/client/global-configs/paper-trade/
 
