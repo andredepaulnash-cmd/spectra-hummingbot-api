@@ -37,7 +37,7 @@ The checked-in master-account paper balance is configured as **USD 25,000** in `
 
 Reference: https://hummingbot.org/client/global-configs/paper-trade/
 
-The API resolves the master-account config at `bots/credentials/master_account/conf_client.yml`: `fs_util` uses `bots` as its base path, and `UnifiedConnectorService` reads that file when constructing the native paper connector. The installed Hummingbot core package is still not pinned to an exact version or commit because this API depends on unreleased core fields. Do not assume the latest public paper connector and the API's installed core are compatible until that dependency is pinned and the paper executor flow is tested.
+The API resolves the master-account config at `bots/credentials/master_account/conf_client.yml`: `fs_util` uses `bots` as its base path, and `UnifiedConnectorService` reads that file when constructing the native paper connector. The API environment pins the Hummingbot package to `hummingbot==20260922`. The exact upstream source commit/build metadata is not separately recorded, so the package pin is reproducible at the distribution-version level but not yet traceable to a source commit. Keep the runtime compatibility test in CI and record the upstream commit used to produce that package before declaring the stack fully locked.
 
 ## Deliberate limitations
 
