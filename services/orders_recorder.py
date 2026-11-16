@@ -309,6 +309,23 @@ class OrdersRecorder:
                     logger.error(f"Error processing order fill for {event.order_id}: {e}, skipping update")
                     return
 
+                # Mirror cumulative exchange fill state onto the exact executor-owned
+                # order row. The provenance endpoint joins this row to the exchange
+                # Order/Trade journals by client_order_id.
+                if order:
+                    executor_repo = ExecutorRepository(session)
+                    await executor_repo.update_executor_order(
+                        client_order_id=event.order_id,
+                        status=str(order.status or "PARTIALLY_FILLED"),
+                        filled_amount=Decimal(str(order.filled_amount or 0)),
+                        average_fill_price=(
+                            None
+                            if order.average_fill_price is None
+                            else Decimal(str(order.average_fill_price))
+                        ),
+                        exchange_order_id=getattr(order, "exchange_order_id", None),
+                    )
+
                 # Create trade record using validated values
                 if order:
                     try:
@@ -357,6 +374,10 @@ class OrdersRecorder:
                 await order_repo.update_order_status(
                     client_order_id=event.order_id,
                     status="CANCELLED"
+                )
+                await ExecutorRepository(session).update_executor_order(
+                    client_order_id=event.order_id,
+                    status="CANCELLED",
                 )
 
             logger.debug(f"Recorded order cancelled: {event.order_id}")
@@ -521,9 +542,14 @@ class OrdersRecorder:
                 order = await order_repo.get_order_by_client_id(event.order_id)
                 if order:
                     order.status = "FILLED"
-                    eoid = getattr(event, 'exchange_order_id', None)
+                    eoid = getattr(event, "exchange_order_id", None)
                     if eoid:
                         order.exchange_order_id = eoid
+                    await ExecutorRepository(session).update_executor_order(
+                        client_order_id=event.order_id,
+                        status="FILLED",
+                        exchange_order_id=eoid,
+                    )
 
             logger.debug(f"Recorded order completed: {event.order_id}")
         except Exception as e:
