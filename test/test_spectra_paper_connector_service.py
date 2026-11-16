@@ -678,3 +678,32 @@ async def test_paper_tickers_are_collected_for_dashboard_without_entering_price_
     fetch.assert_awaited_once_with(
         public_connector, "kraken", raise_on_error=True
     )
+
+@pytest.mark.asyncio
+async def test_paper_only_startup_scan_skips_live_credentials_without_deleting_them(monkeypatch):
+    from services import unified_connector_service as module
+
+    monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
+    monkeypatch.setattr(
+        module.fs_util,
+        "list_folders",
+        lambda _path: ["master_account"],
+    )
+    service = UnifiedConnectorService.__new__(UnifiedConnectorService)
+    service.list_available_credentials = lambda _account: [
+        "kraken",
+        "kraken_paper_trade",
+    ]
+    service.get_trading_connector = AsyncMock()
+
+    await service.initialize_all_trading_connectors()
+
+    service.get_trading_connector.assert_awaited_once_with(
+        "master_account",
+        "kraken_paper_trade",
+    )
+    assert service.list_available_credentials("master_account") == [
+        "kraken",
+        "kraken_paper_trade",
+    ]
+
