@@ -26,6 +26,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Validate Podman doctor shell syntax
+        run: bash -n scripts/spectra-podman-doctor.sh
+
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
