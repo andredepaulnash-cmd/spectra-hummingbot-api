@@ -105,6 +105,7 @@ while IFS="$(printf '\t')" read -r mount_type volume_name source destination; do
   fi
   if [ -d "$mountpoint" ]; then
     tar -czf "$backup_dir/$safe_name.tar.gz" -C "$mountpoint" .
+    chmod 600 "$backup_dir/$safe_name.tar.gz"
   elif [ -f "$mountpoint" ]; then
     cp -p "$mountpoint" "$backup_dir/$safe_name"
     chmod 600 "$backup_dir/$safe_name"
