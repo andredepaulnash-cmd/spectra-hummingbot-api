@@ -312,3 +312,7 @@ reset:
 .PHONY: podman-doctor
 podman-doctor:
 	bash scripts/spectra-podman-doctor.sh
+
+.PHONY: emqx-backup
+emqx-backup:
+	bash scripts/spectra-emqx-backup.sh
