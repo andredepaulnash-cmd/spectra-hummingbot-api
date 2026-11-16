@@ -308,3 +308,7 @@ reset:
 	@find bots/credentials/master_account -name "*.yml" -delete
 	@rm -f bots/credentials/master_account/.password_verification
 	@echo "[INFO] Reset complete."
+
+.PHONY: podman-doctor
+podman-doctor:
+	bash scripts/spectra-podman-doctor.sh
