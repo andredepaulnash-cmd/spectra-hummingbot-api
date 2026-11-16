@@ -1266,6 +1266,10 @@ class UnifiedConnectorService:
         2. Existing orders from database are loaded into in_flight_orders
         3. Order tracking and cancellation work without needing manual initialization
         """
+        # Snapshot the execution mode once so every account is scanned under
+        # the same connector policy for this startup pass.
+        paper_only = paper_only_enabled()
+
         # Get list of all accounts
         accounts = fs_util.list_folders('credentials')
 
@@ -1275,6 +1279,14 @@ class UnifiedConnectorService:
             connector_names = self.list_available_credentials(account_name)
 
             for connector_name in connector_names:
+                if paper_only and not is_paper_trade_connector_name(connector_name):
+                    logger.info(
+                        "Skipping stored live connector credentials for %s/%s while "
+                        "SPECTRA_PAPER_ONLY is enabled; credentials are preserved",
+                        account_name,
+                        connector_name,
+                    )
+                    continue
                 try:
                     logger.info(f"Initializing connector: {account_name}/{connector_name}")
                     await self.get_trading_connector(account_name, connector_name)

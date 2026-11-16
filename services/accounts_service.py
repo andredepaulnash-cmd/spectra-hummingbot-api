@@ -391,17 +391,25 @@ class AccountsService:
 
     async def _ensure_account_connectors_initialized(self, account_name: str):
         """
-        Ensure all connectors for a specific account are initialized.
-        This delegates to the connector service for actual initialization.
+        Ensure all eligible connectors for a specific account are initialized.
 
-        :param account_name: The name of the account to initialize connectors for.
+        In paper-only mode, real exchange credential files remain available for a
+        separately authorized live deployment, but must never be used to create
+        order-capable live connectors. Native *_paper_trade connectors are
+        initialized explicitly from SPECTRA_PAPER_CONNECTORS during startup and
+        do not require credential files.
         """
-        # Initialize missing connectors
         for connector_name in self._connector_service.list_available_credentials(account_name):
+            if paper_only_enabled() and not is_paper_trade_connector_name(connector_name):
+                logger.info(
+                    "Skipping stored live connector credentials for %s/%s while "
+                    "SPECTRA_PAPER_ONLY is enabled; credentials are preserved",
+                    account_name,
+                    connector_name,
+                )
+                continue
             try:
-                # Only initialize if connector doesn't exist
                 if not self._connector_service.is_trading_connector_initialized(account_name, connector_name):
-                    # Get connector will now handle all initialization
                     await self._connector_service.get_trading_connector(account_name, connector_name)
             except Exception as e:
                 logger.error(f"Error initializing connector {connector_name} for account {account_name}: {e}")
