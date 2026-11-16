@@ -11,6 +11,8 @@ from hummingbot.core.event.event_forwarder import SourceInfoEventForwarder
 from hummingbot.core.event.events import BuyOrderCreatedEvent, MarketEvent, OrderFilledEvent, SellOrderCreatedEvent, TradeType
 
 from database import AsyncDatabaseManager, OrderRepository, TradeRepository
+from database.repositories.executor_repository import ExecutorRepository
+from utils.executor_log_capture import current_executor_id
 from utils.trading_pair import split_trading_pair
 
 # Initialize logger
@@ -166,46 +168,79 @@ class OrdersRecorder:
 
     async def _handle_order_created(self, event: Union[BuyOrderCreatedEvent, SellOrderCreatedEvent],
                                     trade_type: TradeType):
-        """Handle order creation events"""
+        """Persist the exchange order and its exact owning executor identity."""
         logger.debug(f"OrdersRecorder: _handle_order_created started for order {event.order_id}")
         try:
+            # ExecutorService sets this ContextVar before starting each executor
+            # task. Paper connector order events are emitted in that task context,
+            # allowing an exact executor -> client-order binding without guessing
+            # from pair, amount, or timestamp.
+            executor_id = current_executor_id.get()
             async with self.db_manager.get_session_context() as session:
                 order_repo = OrderRepository(session)
-
-                # Check if order already exists first
                 existing_order = await order_repo.get_order_by_client_id(event.order_id)
                 if existing_order:
                     logger.debug(
-                        f"OrdersRecorder: Order {event.order_id} already exists with status {existing_order.status}")
-
-                    # Update exchange_order_id if we have it now and it was missing
-                    exchange_order_id = getattr(event, 'exchange_order_id', None)
+                        f"OrdersRecorder: Order {event.order_id} already exists with status {existing_order.status}"
+                    )
+                    exchange_order_id = getattr(event, "exchange_order_id", None)
                     if exchange_order_id and not existing_order.exchange_order_id:
                         existing_order.exchange_order_id = exchange_order_id
-                        logger.debug(
-                            f"OrdersRecorder: Updated exchange_order_id to {exchange_order_id} for order {event.order_id}")
-
-                    # Update status if it's still in PENDING_CREATE or similar early state
                     if existing_order.status in ["PENDING_CREATE", "PENDING", "SUBMITTED"]:
                         existing_order.status = "OPEN"
-                        logger.debug(f"OrdersRecorder: Updated status to OPEN for order {event.order_id}")
-
                     await session.flush()
-                    return
+                else:
+                    order_data = {
+                        "client_order_id": event.order_id,
+                        "account_name": self.account_name,
+                        "connector_name": self.connector_name,
+                        "trading_pair": event.trading_pair,
+                        "trade_type": trade_type.name,
+                        "order_type": event.type.name if hasattr(event, "type") else "UNKNOWN",
+                        "amount": float(event.amount),
+                        "price": float(event.price) if event.price else None,
+                        "status": "OPEN",
+                        "exchange_order_id": getattr(event, "exchange_order_id", None),
+                    }
+                    await order_repo.create_order(order_data)
 
-                order_data = {
-                    "client_order_id": event.order_id,
-                    "account_name": self.account_name,
-                    "connector_name": self.connector_name,
-                    "trading_pair": event.trading_pair,
-                    "trade_type": trade_type.name,
-                    "order_type": event.type.name if hasattr(event, 'type') else 'UNKNOWN',
-                    "amount": float(event.amount),
-                    "price": float(event.price) if event.price else None,
-                    "status": "OPEN",
-                    "exchange_order_id": getattr(event, 'exchange_order_id', None)
-                }
-                await order_repo.create_order(order_data)
+                if executor_id:
+                    executor_repo = ExecutorRepository(session)
+                    existing_executor_order = await executor_repo.get_order_by_client_id(
+                        event.order_id
+                    )
+                    if existing_executor_order is not None:
+                        if existing_executor_order.executor_id != executor_id:
+                            raise RuntimeError(
+                                "client order id is already bound to a different executor"
+                            )
+                    else:
+                        raw_price = getattr(event, "price", None)
+                        price = None
+                        if raw_price is not None:
+                            parsed_price = Decimal(str(raw_price))
+                            if parsed_price.is_finite() and parsed_price > 0:
+                                price = parsed_price
+                        amount = Decimal(str(event.amount))
+                        if not amount.is_finite() or amount <= 0:
+                            raise RuntimeError("executor order amount must be finite and positive")
+                        await executor_repo.create_executor_order(
+                            executor_id=executor_id,
+                            client_order_id=event.order_id,
+                            order_type=(
+                                event.type.name if hasattr(event, "type") else "UNKNOWN"
+                            ),
+                            trade_type=trade_type.name,
+                            amount=amount,
+                            price=price,
+                            exchange_order_id=getattr(event, "exchange_order_id", None),
+                            status="OPEN",
+                        )
+                else:
+                    logger.debug(
+                        "Order %s has no executor context; retaining ordinary exchange history only",
+                        event.order_id,
+                    )
 
             logger.debug(f"OrdersRecorder: Successfully recorded order created: {event.order_id}")
         except Exception as e:
