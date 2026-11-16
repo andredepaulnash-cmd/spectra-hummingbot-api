@@ -22,6 +22,12 @@ fi
 
 timestamp="$(date -u +%Y%m%dT%H%M%S%NZ)"
 backup_dir="$BACKUP_ROOT/emqx-$timestamp"
+free_kb="$(df -Pk . 2>/dev/null | awk 'NR==2 {print $4}')"
+if [[ "$free_kb" =~ ^[0-9]+$ ]] && [ "$free_kb" -lt 5242880 ]; then
+  echo "ERROR: less than 5 GiB free; refusing to create a large broker backup." >&2
+  exit 1
+fi
+
 mkdir -p "$backup_dir"
 chmod 700 "$backup_dir"
 
@@ -79,7 +85,7 @@ fi
 
 if [ "$was_running" = true ]; then
   echo "Stopping broker briefly for a consistent raw-volume snapshot..."
-  podman stop --time 30 "$BROKER_CONTAINER" >/dev/null
+  podman stop --time 60 "$BROKER_CONTAINER" >/dev/null
   stopped=true
 fi
 
@@ -94,7 +100,7 @@ for m in d.get("Mounts",[]):
     ))
 ' >"$backup_dir/mounts.tsv"
 
-volume_count=0
+archived_count=0
 while IFS="$(printf '\t')" read -r mount_type volume_name source destination; do
   [ -n "$source" ] || continue
   safe_name="$(printf '%s' "$destination" | sed 's#^/##; s#/#_#g')"
@@ -106,13 +112,14 @@ while IFS="$(printf '\t')" read -r mount_type volume_name source destination; do
   if [ -d "$mountpoint" ]; then
     tar -czf "$backup_dir/$safe_name.tar.gz" -C "$mountpoint" .
     chmod 600 "$backup_dir/$safe_name.tar.gz"
+    archived_count=$((archived_count + 1))
   elif [ -f "$mountpoint" ]; then
     cp -p "$mountpoint" "$backup_dir/$safe_name"
     chmod 600 "$backup_dir/$safe_name"
+    archived_count=$((archived_count + 1))
   else
     echo "WARNING: mount source unavailable; skipped $destination ($mountpoint)" >&2
   fi
-  volume_count=$((volume_count + 1))
 done <"$backup_dir/mounts.tsv"
 
 if [ "$stopped" = true ]; then
@@ -125,12 +132,12 @@ created_utc=$timestamp
 broker_container=$BROKER_CONTAINER
 container_was_running=$was_running
 native_emqx_export=$export_ok
-raw_mounts_archived=$volume_count
+raw_mounts_archived=$archived_count
 old_volumes_were_not_deleted_or_modified=true
 EOF
 chmod 600 "$backup_dir/manifest.txt"
 
-if [ "$volume_count" -eq 0 ]; then
+if [ "$archived_count" -eq 0 ]; then
   echo "ERROR: no broker mounts were archived; inspect $backup_dir" >&2
   exit 1
 fi
