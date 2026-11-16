@@ -38,7 +38,7 @@ running() {
 }
 state() {
   podman inspect "$1" 2>/dev/null |
-    python3 -c 'import json,sys; s=json.load(sys.stdin)[0].get("State",{}); print("{} / health={}".format(s.get("Status","?"),s.get("Health",{}).get("Status","unknown")))' \
+    python3 -c 'import json,sys; s=json.load(sys.stdin)[0].get("State",{}); h=s.get("Health") or {}; print("{} / health={}".format(s.get("Status","?"),h.get("Status","unknown")))' \
     2>/dev/null || echo "not found"
 }
 
@@ -71,6 +71,8 @@ if [ -f .env ]; then
   ALLOW_LIVE="$(env_get SPECTRA_ALLOW_LIVE_EXECUTION)"
   if [ -n "$API_USER" ] && [ -n "$API_PASS" ]; then row ok "API credentials" "present; values hidden"
   else row fail "API credentials" "USERNAME/PASSWORD missing"; fi
+  if [ -n "$BROKER_USER" ] && [ -n "$BROKER_PASS" ]; then row ok "Broker credentials" "present; values hidden"
+  else row warn "Broker credentials" "BROKER_USERNAME/BROKER_PASSWORD missing"; fi
   if [ "$PAPER_ONLY" = "true" ]; then row ok "Paper-only config" "SPECTRA_PAPER_ONLY=true"
   else row fail "Paper-only config" "SPECTRA_PAPER_ONLY is not explicitly true"; fi
   case ",$PAPER_CONNECTORS," in
@@ -99,8 +101,16 @@ fi
 
 for name in "$API_CONTAINER" "$BROKER_CONTAINER" "$PG_CONTAINER"; do
   if exists "$name"; then
-    if running "$name"; then row ok "$name" "$(state "$name")"
-    else row fail "$name" "$(state "$name")"; fi
+    current_state="$(state "$name")"
+    if running "$name"; then
+      case "$current_state" in
+        *"health=unhealthy"*) row fail "$name" "$current_state";;
+        *"health=starting"*) row warn "$name" "$current_state";;
+        *) row ok "$name" "$current_state";;
+      esac
+    else
+      row fail "$name" "$current_state"
+    fi
   else row fail "$name" "container not found"; fi
 done
 
