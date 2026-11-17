@@ -262,11 +262,9 @@ def verify_and_consume_receipt(
         raise SpectraDispatchReceiptError("Spectra dispatch receipt is missing required scope")
     if payload["intent"] not in {"ENTRY", "RECOVERY", "EXIT", "CANCEL"}:
         raise SpectraDispatchReceiptError("Spectra dispatch receipt intent is unsupported")
-    expected_policy = os.getenv(
-        "SPECTRA_DISPATCH_POLICY_VERSION", "spectra-policy-v1"
-    ).strip()
-    if payload["policy_version"] != expected_policy:
-        raise SpectraDispatchReceiptError("Spectra dispatch receipt policy version is not accepted")
+    expected_policy = os.getenv("SPECTRA_DISPATCH_POLICY_VERSION", "")
+    if expected_policy != "spectra-alpha2-v1" or payload["policy_version"] != "spectra-alpha2-v1":
+        raise SpectraDispatchReceiptError("Alpha 2.0 dispatch policy version is not configured or accepted")
     try:
         amount = Decimal(payload["amount"])
     except (InvalidOperation, ValueError) as exc:
@@ -313,6 +311,9 @@ def verify_and_consume_receipt(
             ):
                 if column not in columns:
                     conn.execute(f"ALTER TABLE consumed_spectra_dispatch_receipts ADD COLUMN {column} {declaration}")
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_consumed_spectra_proposal_unique ON consumed_spectra_dispatch_receipts(proposal_id)"
+            )
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 """
