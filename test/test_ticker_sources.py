@@ -506,7 +506,7 @@ def test_paper_trade_and_testnet_are_not_market_data_connectors():
     assert is_market_data_connector("hyperliquid_perpetual") is True
     assert is_market_data_connector("kucoin_hft") is True
     for excluded in (
-        "binance_paper_trade", "hyperliquid_testnet", "bybit_perpetual_testnet",
+        "kraken_paper_trade", "hyperliquid_testnet", "bybit_perpetual_testnet",
         "architect_perpetual_sandbox",
     ):
         assert is_market_data_connector(excluded) is False, excluded
@@ -531,10 +531,10 @@ def test_collection_set_includes_paper_but_skips_testnet(monkeypatch):
     service = mds.MarketDataService(connector_service=StubConnectorService())
     service._connector_service._data_connectors = {
         "binance": object(), "bybit_testnet": object(),
-        "binance_paper_trade": object(), "okx": object(),
+        "kraken_paper_trade": object(), "okx": object(),
     }
     names = sorted(service._connected_connector_names())
-    assert names == ["binance", "binance_paper_trade", "okx"]
+    assert names == ["binance", "kraken_paper_trade", "okx"]
     assert not any("testnet" in name or "sandbox" in name for name in names)
 
 
