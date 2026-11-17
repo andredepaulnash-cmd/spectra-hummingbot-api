@@ -286,7 +286,7 @@ def test_cancel_order_receipt_binds_exact_paper_account_and_order(monkeypatch, t
     path = "/trading/paper-account/kraken_paper_trade/orders/client-123/cancel"
     token = _token(
         private, body, path=path, operation="cancel_order",
-        connector_name="kraken_paper_trade", trading_pair="BTC-USDT",
+        connector_name="kraken_paper_trade", trading_pair="BTC-USDTT",
         amount="20", intent="CANCEL",
     )
     payload = receipts.verify_and_consume_receipt(
@@ -308,7 +308,7 @@ def test_cancel_order_receipt_rejects_non_kraken_paper_connector(monkeypatch, tm
     path = "/trading/paper-account/binance_paper_trade/orders/client-123/cancel"
     token = _token(
         private, body, path=path, operation="cancel_order",
-        connector_name="binance_paper_trade", trading_pair="BTC-USDT",
+        connector_name="binance_paper_trade", trading_pair="BTC-USDTT",
         amount="20", intent="CANCEL",
     )
     with pytest.raises(receipts.SpectraDispatchReceiptError, match="restricted to kraken_paper_trade"):
@@ -380,7 +380,7 @@ def test_paper_trade_receipt_authorizes_exact_paper_order_once(monkeypatch, tmp_
     body = {
         "account_name": "master_account",
         "connector_name": "kraken_paper_trade",
-        "trading_pair": "BTC-USD",
+        "trading_pair": "BTC-USDT",
         "trade_type": "BUY",
         "amount": "0.001",
         "order_type": "MARKET",
@@ -389,7 +389,7 @@ def test_paper_trade_receipt_authorizes_exact_paper_order_once(monkeypatch, tmp_
     }
     token = _token(
         private, body, path="/trading/orders", operation="place_trade",
-        connector_name="kraken_paper_trade", trading_pair="BTC-USD",
+        connector_name="kraken_paper_trade", trading_pair="BTC-USDT",
         amount="65", intent="ENTRY",
     )
     payload = receipts.verify_and_consume_receipt(
@@ -411,7 +411,7 @@ def test_paper_trade_receipt_rejects_live_connector_and_changed_order(monkeypatc
     body = {
         "account_name": "master_account",
         "connector_name": "kraken",
-        "trading_pair": "BTC-USD",
+        "trading_pair": "BTC-USDT",
         "trade_type": "BUY",
         "amount": "0.001",
         "order_type": "MARKET",
@@ -420,7 +420,7 @@ def test_paper_trade_receipt_rejects_live_connector_and_changed_order(monkeypatc
     }
     live_token = _token(
         private, body, path="/trading/orders", operation="place_trade",
-        connector_name="kraken", trading_pair="BTC-USD", amount="65",
+        connector_name="kraken", trading_pair="BTC-USDT", amount="65",
     )
     with pytest.raises(receipts.SpectraDispatchReceiptError, match="restricted to kraken_paper_trade"):
         receipts.verify_and_consume_receipt(
@@ -431,7 +431,7 @@ def test_paper_trade_receipt_rejects_live_connector_and_changed_order(monkeypatc
     paper = {**body, "connector_name": "kraken_paper_trade"}
     token = _token(
         private, paper, path="/trading/orders", operation="place_trade",
-        connector_name="kraken_paper_trade", trading_pair="BTC-USD", amount="65",
+        connector_name="kraken_paper_trade", trading_pair="BTC-USDT", amount="65",
     )
     altered = {**paper, "amount": "0.01"}
     with pytest.raises(receipts.SpectraDispatchReceiptError, match="body digest"):
