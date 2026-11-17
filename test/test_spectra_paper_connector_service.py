@@ -20,7 +20,7 @@ async def test_trading_connector_creation_rejects_live_connector(monkeypatch):
     created = object()
     service._create_and_initialize_trading_connector = AsyncMock(return_value=created)
 
-    with pytest.raises(ValueError, match="paper-only mode"):
+    with pytest.raises(ValueError, match="only the keyless kraken_paper_trade"):
         await service.get_trading_connector("paper-account", "kraken")
 
     service._create_and_initialize_trading_connector.assert_not_awaited()
@@ -38,7 +38,7 @@ def test_data_connector_creation_rejects_live_connector(monkeypatch):
     service._data_connectors = {}
     service._create_data_connector = lambda name: f"data:{name}"
 
-    with pytest.raises(ValueError, match="paper-only mode"):
+    with pytest.raises(ValueError, match="only the keyless kraken_paper_trade"):
         service.get_data_connector("kraken")
 
     assert service.get_data_connector("kraken_paper_trade") == (
