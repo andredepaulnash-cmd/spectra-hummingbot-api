@@ -20,13 +20,17 @@ def _keypair(monkeypatch):
         serialization.PublicFormat.Raw,
     )
     monkeypatch.setenv("SPECTRA_DISPATCH_PUBLIC_KEY", _encoded(public_raw))
+    monkeypatch.setenv("SPECTRA_DISPATCH_POLICY_VERSION", "spectra-alpha2-v1")
+    monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
+    monkeypatch.setenv("SPECTRA_ALLOW_LIVE_EXECUTION", "false")
+    monkeypatch.setenv("SPECTRA_REQUIRE_CORE_RECEIPTS", "true")
     return private
 
 
 def _token(
     private, body, *, now=1000, path="/executors", method="POST",
-    connector_name="kraken_paper_trade", trading_pair="XRP-USD",
-    policy_version="spectra-policy-v1", amount="20",
+    connector_name="kraken_paper_trade", trading_pair="XRP-USDT",
+    policy_version="spectra-alpha2-v1", amount="20",
     operation="create_executor", executor_id=None, intent="ENTRY",
 ):
     if operation == "create_executor":
