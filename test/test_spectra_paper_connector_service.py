@@ -13,6 +13,7 @@ from services.unified_connector_service import UnifiedConnectorService
 @pytest.mark.asyncio
 async def test_trading_connector_creation_rejects_live_connector(monkeypatch):
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
+    monkeypatch.setenv("SPECTRA_ALLOW_LIVE_EXECUTION", "false")
     service = UnifiedConnectorService.__new__(UnifiedConnectorService)
     service._connector_locks = {}
     service._trading_connectors = {}
