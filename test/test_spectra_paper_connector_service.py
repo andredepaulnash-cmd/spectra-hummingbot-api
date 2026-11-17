@@ -681,10 +681,6 @@ async def test_paper_only_startup_scan_skips_live_credentials_without_deleting_t
         lambda _path: ["master_account"],
     )
     service = UnifiedConnectorService.__new__(UnifiedConnectorService)
-    service.list_available_credentials = lambda _account: [
-        "kraken",
-        "kraken_paper_trade",
-    ]
     service.get_trading_connector = AsyncMock()
 
     await service.initialize_all_trading_connectors()
@@ -693,10 +689,7 @@ async def test_paper_only_startup_scan_skips_live_credentials_without_deleting_t
         "master_account",
         "kraken_paper_trade",
     )
-    assert service.list_available_credentials("master_account") == [
-        "kraken",
-        "kraken_paper_trade",
-    ]
+    assert service.list_available_credentials("master_account") == ["kraken_paper_trade"]
 
 
 
@@ -717,16 +710,9 @@ def test_paper_startup_selection_uses_explicit_allowlist_not_credentials(monkeyp
     assert service.list_connectors_to_initialize("secondary_account") == []
 
 
-def test_live_startup_selection_uses_existing_credential_discovery(monkeypatch):
+def test_live_startup_selection_is_rejected(monkeypatch):
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "false")
     monkeypatch.setenv("SPECTRA_ALLOW_LIVE_EXECUTION", "true")
-    monkeypatch.setattr(
-        "services.unified_connector_service.fs_util.list_files",
-        lambda _path: ["kraken.yml", "binance.yml"],
-    )
     service = UnifiedConnectorService.__new__(UnifiedConnectorService)
-
-    assert service.list_connectors_to_initialize("master_account") == [
-        "kraken",
-        "binance",
-    ]
+    with pytest.raises(RuntimeError, match="SPECTRA_PAPER_ONLY=true"):
+        service.list_connectors_to_initialize("master_account")
