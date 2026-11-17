@@ -297,10 +297,21 @@ def verify_and_consume_receipt(
                     path TEXT NOT NULL,
                     body_sha256 TEXT NOT NULL,
                     consumed_at REAL NOT NULL,
-                    expires_at REAL NOT NULL
+                    expires_at REAL NOT NULL,
+                    response_status INTEGER,
+                    response_body TEXT,
+                    order_id TEXT
                 )
                 """
             )
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(consumed_spectra_dispatch_receipts)")}
+            for column, declaration in (
+                ("response_status", "INTEGER"),
+                ("response_body", "TEXT"),
+                ("order_id", "TEXT"),
+            ):
+                if column not in columns:
+                    conn.execute(f"ALTER TABLE consumed_spectra_dispatch_receipts ADD COLUMN {column} {declaration}")
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 """
@@ -331,6 +342,27 @@ def verify_and_consume_receipt(
         ) from exc
 
     return payload
+
+
+
+def get_dispatch_receipt_result(proposal_id: str, *, db_path: str | Path | None = None) -> dict[str, Any] | None:
+    """Read the durable response/order ID bound to a consumed Core proposal."""
+    target=Path(db_path or os.getenv("SPECTRA_DISPATCH_RECEIPT_DB","bots/data/spectra_dispatch_receipts.sqlite3"))
+    if not target.exists():
+        return None
+    with sqlite3.connect(str(target),timeout=5) as conn:
+        conn.row_factory=sqlite3.Row
+        columns={row[1] for row in conn.execute("PRAGMA table_info(consumed_spectra_dispatch_receipts)")}
+        if "order_id" not in columns:
+            return None
+        row=conn.execute(
+            """SELECT receipt_id,proposal_id,method,path,body_sha256,consumed_at,
+            expires_at,response_status,response_body,order_id
+            FROM consumed_spectra_dispatch_receipts
+            WHERE proposal_id=? ORDER BY consumed_at DESC LIMIT 1""",
+            (proposal_id,),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 class SpectraDispatchReceiptMiddleware:
@@ -466,4 +498,29 @@ class SpectraDispatchReceiptMiddleware:
                 return replay.pop(0)
             return {"type": "http.request", "body": b"", "more_body": False}
 
-        await self.app(scope, replay_receive, send)
+        response_status = None
+        response_chunks = []
+
+        async def capture_send(message):
+            nonlocal response_status
+            if message["type"] == "http.response.start":
+                response_status = message.get("status")
+            elif message["type"] == "http.response.body":
+                response_chunks.append(message.get("body", b""))
+            await send(message)
+
+        await self.app(scope, replay_receive, capture_send)
+        try:
+            response_body = b"".join(response_chunks)[:65536].decode("utf-8", "replace")
+            response_json = json.loads(response_body) if response_body else {}
+            order_id = response_json.get("order_id") if isinstance(response_json, dict) else None
+            target = Path(os.getenv("SPECTRA_DISPATCH_RECEIPT_DB", "bots/data/spectra_dispatch_receipts.sqlite3"))
+            with sqlite3.connect(str(target), timeout=5, isolation_level=None) as conn:
+                conn.execute(
+                    """UPDATE consumed_spectra_dispatch_receipts
+                    SET response_status=?,response_body=?,order_id=?
+                    WHERE receipt_id=?""",
+                    (response_status,response_body,str(order_id) if order_id else None,payload["receipt_id"]),
+                )
+        except Exception:
+            logging.exception("Could not persist Hummingbot response against consumed Spectra receipt")
