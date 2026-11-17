@@ -1,10 +1,8 @@
-"""Fail-closed HTTP and connector policy for Spectra paper mode.
+"""Hard fail-closed route and connector policy for Spectra Alpha 2.0.
 
-Paper mode may use Hummingbot's explicit paper-trade connectors. It must
-never initialize a live connector, Gateway connector, Docker bot, or
-autonomous bot orchestrator.
+This branch has no live mode. The only permitted connector is the keyless
+Kraken paper-trade wrapper.
 """
-
 from __future__ import annotations
 
 import os
@@ -12,16 +10,12 @@ import re
 from urllib.parse import urlsplit
 
 _MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+PAPER_CONNECTOR = "kraken_paper_trade"
 
-# POST routes allowed in paper mode. Routes that can touch a connector are
-# safe only because UnifiedConnectorService independently rejects every
-# connector name that does not end in "_paper_trade".
 _PAPER_POST_PATTERNS = tuple(
     re.compile(pattern)
     for pattern in (
         r"/executors/search",
-        r"/accounts/add-account",
-        r"/accounts/add-credential/[^/]+/[^/]+",
         r"/executors/?",
         r"/executors/[^/]+/stop",
         r"/trading/orders",
@@ -34,82 +28,58 @@ _PAPER_POST_PATTERNS = tuple(
         r"/portfolio/state",
         r"/portfolio/history",
         r"/market-data/.*",
-        # Search uses POST for filtering/pagination but is read-only; keep the
-        # exception exact so CLMM write routes remain blocked.
-        r"/gateway/clmm/positions/search",
     )
 )
 
 
 def paper_only_enabled() -> bool:
-    """Read the mode at call time so every service shares one strict setting."""
-    value = os.getenv("SPECTRA_PAPER_ONLY", "true").strip().lower()
-    if value not in {"1", "true", "yes", "0", "false", "no"}:
-        raise RuntimeError("SPECTRA_PAPER_ONLY must be an explicit boolean")
-    enabled = value in {"1", "true", "yes"}
-    if not enabled:
-        allow_live = os.getenv("SPECTRA_ALLOW_LIVE_EXECUTION", "false").strip().lower()
-        if allow_live not in {"1", "true", "yes"}:
-            raise RuntimeError(
-                "Spectra live execution is disabled in this build; "
-                "SPECTRA_ALLOW_LIVE_EXECUTION requires separate explicit authorization"
-            )
-    return enabled
+    """Require exact Alpha 2.0 paper flags; there is no live-mode branch."""
+    if os.getenv("SPECTRA_PAPER_ONLY") != "true":
+        raise RuntimeError("Alpha 2.0 requires SPECTRA_PAPER_ONLY=true")
+    if os.getenv("SPECTRA_ALLOW_LIVE_EXECUTION") != "false":
+        raise RuntimeError("Alpha 2.0 requires SPECTRA_ALLOW_LIVE_EXECUTION=false")
+    return True
 
 
 def is_paper_trade_connector_name(connector_name: str) -> bool:
-    """Hummingbot paper connectors use an explicit paper-trade suffix."""
-    return str(connector_name).strip().lower().endswith("_paper_trade")
+    return str(connector_name).strip().lower() == PAPER_CONNECTOR
 
 
 def configured_paper_connectors() -> tuple[str, ...]:
-    """Return explicitly configured paper connector names, rejecting live names."""
+    paper_only_enabled()
     raw = os.getenv("SPECTRA_PAPER_CONNECTORS", "")
-    names = tuple(dict.fromkeys(
-        name.strip() for name in raw.split(",") if name.strip()
-    ))
-    invalid = [name for name in names if not is_paper_trade_connector_name(name)]
-    if invalid:
-        raise ValueError(
-            "SPECTRA_PAPER_CONNECTORS may contain only paper connector names; "
-            f"rejected: {', '.join(invalid)}"
+    names = tuple(dict.fromkeys(name.strip() for name in raw.split(",") if name.strip()))
+    if names != (PAPER_CONNECTOR,):
+        raise RuntimeError(
+            "Alpha 2.0 requires SPECTRA_PAPER_CONNECTORS=kraken_paper_trade exactly"
         )
     return names
 
 
 def require_paper_trade_connector(connector_name: str) -> None:
-    """Reject live CEX/DEX connectors whenever Spectra paper mode is enabled."""
-    if paper_only_enabled() and not is_paper_trade_connector_name(connector_name):
+    paper_only_enabled()
+    if not is_paper_trade_connector_name(connector_name):
         raise ValueError(
-            f"Spectra paper-only mode permits only *_paper_trade connectors; "
-            f"rejected connector '{connector_name}'"
+            "Alpha 2.0 permits only the keyless kraken_paper_trade connector"
         )
 
 
-def validate_paper_connector_configuration(
-    connector_name: str, credentials: dict
-) -> None:
-    """Permit only paper connector configs with no exchange/wallet secrets."""
-    if not paper_only_enabled():
-        return
-    # Real exchange credentials may be stored in paper mode, but never create
-    # an order-capable connector. Paper adapters themselves remain keyless.
-    if not is_paper_trade_connector_name(connector_name):
-        return
+def validate_paper_connector_configuration(connector_name: str, credentials: dict) -> None:
+    paper_only_enabled()
+    require_paper_trade_connector(connector_name)
     sensitive_markers = (
         "api_key", "secret", "password", "private_key", "mnemonic", "seed",
+        "passphrase", "token",
     )
-    for key, value in credentials.items():
+    for key in credentials:
         normalized_key = str(key).lower()
-        if any(marker in normalized_key for marker in sensitive_markers) and value not in (None, ""):
+        if any(marker in normalized_key for marker in sensitive_markers):
             raise ValueError(
-                "Spectra paper connector configuration must not contain "
-                "exchange or wallet secrets."
+                "Alpha 2.0 paper connector configuration must not contain credential fields"
             )
 
 
 def normalize_path(path: str) -> str:
-    """Normalize only the path component; query strings never grant an exemption."""
     normalized = urlsplit(path).path
     if not normalized.startswith("/"):
         normalized = "/" + normalized
@@ -119,13 +89,11 @@ def normalize_path(path: str) -> str:
 
 
 def is_paper_allowed_post_path(path: str) -> bool:
-    """True only for a paper action/query path with connector-level guards."""
     normalized = normalize_path(path)
     return any(pattern.fullmatch(normalized) for pattern in _PAPER_POST_PATTERNS)
 
 
 def should_block_paper_mutation(method: str, path: str) -> bool:
-    """Fail closed for all non-paper HTTP mutations."""
     normalized_method = str(method).upper()
     if normalized_method not in _MUTATING_METHODS:
         return False
@@ -135,7 +103,6 @@ def should_block_paper_mutation(method: str, path: str) -> bool:
 
 
 def paper_allowed_post_paths() -> tuple[str, ...]:
-    """Representative stable paths for tests and operator documentation."""
     return (
         "/executors/search",
         "/executors/",
@@ -151,5 +118,4 @@ def paper_allowed_post_paths() -> tuple[str, ...]:
         "/portfolio/history",
         "/market-data/prices",
         "/market-data/candles",
-        "/gateway/clmm/positions/search",
     )
