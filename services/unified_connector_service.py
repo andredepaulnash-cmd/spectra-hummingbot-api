@@ -1283,9 +1283,8 @@ class UnifiedConnectorService:
         2. Existing orders from database are loaded into in_flight_orders
         3. Order tracking and cancellation work without needing manual initialization
         """
-        # Snapshot the execution mode once so every account is scanned under
-        # the same connector policy for this startup pass.
-        paper_only = paper_only_enabled()
+        # Validate the configured execution mode before enumerating accounts.
+        paper_only_enabled()
 
         # Get list of all accounts
         accounts = fs_util.list_folders('credentials')
