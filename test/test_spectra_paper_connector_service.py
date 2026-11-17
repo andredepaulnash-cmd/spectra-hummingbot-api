@@ -33,6 +33,7 @@ async def test_trading_connector_creation_rejects_live_connector(monkeypatch):
 
 def test_data_connector_creation_rejects_live_connector(monkeypatch):
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
+    monkeypatch.setenv("SPECTRA_ALLOW_LIVE_EXECUTION", "false")
     service = UnifiedConnectorService.__new__(UnifiedConnectorService)
     service._data_connectors = {}
     service._create_data_connector = lambda name: f"data:{name}"
@@ -69,6 +70,7 @@ def test_paper_trading_connector_shares_keyless_market_data_tracker_and_balances
     from services import unified_connector_service as module
 
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
+    monkeypatch.setenv("SPECTRA_ALLOW_LIVE_EXECUTION", "false")
     balances = []
     tracker = object()
     constructed = {}
@@ -140,6 +142,7 @@ def test_paper_data_connector_uses_base_exchange_class_without_auth(monkeypatch)
     from services import unified_connector_service as module
 
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
+    monkeypatch.setenv("SPECTRA_ALLOW_LIVE_EXECUTION", "false")
     init_calls = []
 
     class FakeSetting:
@@ -179,6 +182,7 @@ def test_paper_data_connector_uses_base_exchange_class_without_auth(monkeypatch)
 @pytest.mark.asyncio
 async def test_native_paper_adapter_skips_exchange_py_base_startup_lifecycle(monkeypatch):
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
+    monkeypatch.setenv("SPECTRA_ALLOW_LIVE_EXECUTION", "false")
 
     class NativePaperAdapter:
         in_flight_orders = {}
@@ -669,6 +673,7 @@ async def test_paper_only_startup_scan_skips_live_credentials_without_deleting_t
     from services import unified_connector_service as module
 
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
+    monkeypatch.setenv("SPECTRA_ALLOW_LIVE_EXECUTION", "false")
     monkeypatch.setenv("SPECTRA_PAPER_CONNECTORS", "kraken_paper_trade")
     monkeypatch.setattr(
         module.fs_util,
@@ -698,6 +703,7 @@ async def test_paper_only_startup_scan_skips_live_credentials_without_deleting_t
 
 def test_paper_startup_selection_uses_explicit_allowlist_not_credentials(monkeypatch):
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
+    monkeypatch.setenv("SPECTRA_ALLOW_LIVE_EXECUTION", "false")
     monkeypatch.setenv("SPECTRA_PAPER_CONNECTORS", "kraken_paper_trade")
     monkeypatch.setattr(
         "services.unified_connector_service.fs_util.list_files",
