@@ -34,6 +34,7 @@ from utils.file_system import fs_util
 from utils.hummingbot_api_config_adapter import HummingbotAPIConfigAdapter
 from utils.security import BackendAPISecurity
 from utils.spectra_paper_guard import (
+    configured_paper_connectors,
     is_paper_trade_connector_name,
     paper_only_enabled,
     require_paper_trade_connector,
@@ -249,6 +250,20 @@ class UnifiedConnectorService:
             Dict mapping account_name -> connector_name -> ConnectorBase
         """
         return self._trading_connectors
+
+    def list_connectors_to_initialize(self, account_name: str) -> List[str]:
+        """Return connectors eligible for automatic startup under the active mode.
+
+        Paper mode is intentionally independent of stored exchange credentials:
+        only explicitly configured *_paper_trade connectors are initialized for
+        master_account. Credential files remain available to account-management
+        UI and a separately authorized live deployment.
+        """
+        if paper_only_enabled():
+            if account_name != "master_account":
+                return []
+            return list(configured_paper_connectors())
+        return self.list_available_credentials(account_name)
 
     def get_account_connectors(self, account_name: str) -> Dict[str, ConnectorBase]:
         """
@@ -995,17 +1010,9 @@ class UnifiedConnectorService:
 
         require_paper_trade_connector(connector_name)
 
-        # Check if this is a Gateway network connector
-        # Gateway connectors are NOT in AllConnectorSettings (those are exchange connectors)
-        # Network format: "chain-network" (e.g., "solana-mainnet-beta", "ethereum-mainnet")
-        if connector_name not in self._conn_settings:
-            logger.info(f"Creating Gateway connector for network: {connector_name}")
-            return Gateway(
-                connector_name=connector_name,
-                trading_pairs=[],
-                trading_required=True,
-            )
-
+        # Paper-trade names are wrapper identities, not exchange modules, and
+        # therefore are normally absent from AllConnectorSettings. Handle them
+        # before the Gateway fallback so they cannot be misclassified as networks.
         if connector_name.endswith("_paper_trade"):
             # Hummingbot paper connectors are wrappers around the real exchange's
             # public order-book tracker; there is no kraken_paper_trade Python module.
@@ -1059,6 +1066,16 @@ class UnifiedConnectorService:
                 base_connector_name,
             )
             return connector
+
+        # Gateway network connectors are not exchange entries in AllConnectorSettings.
+        # Preserve their existing construction path after the paper wrapper case.
+        if connector_name not in self._conn_settings:
+            logger.info(f"Creating Gateway connector for network: {connector_name}")
+            return Gateway(
+                connector_name=connector_name,
+                trading_pairs=[],
+                trading_required=True,
+            )
 
         conn_setting = self._conn_settings[connector_name]
         keys = BackendAPISecurity.api_keys(connector_name)
@@ -1266,27 +1283,19 @@ class UnifiedConnectorService:
         2. Existing orders from database are loaded into in_flight_orders
         3. Order tracking and cancellation work without needing manual initialization
         """
-        # Snapshot the execution mode once so every account is scanned under
-        # the same connector policy for this startup pass.
-        paper_only = paper_only_enabled()
+        # Validate the configured execution mode before enumerating accounts.
+        paper_only_enabled()
 
         # Get list of all accounts
         accounts = fs_util.list_folders('credentials')
 
         total_initialized = 0
         for account_name in accounts:
-            # Get all connector credentials for this account
-            connector_names = self.list_available_credentials(account_name)
+            # Paper mode uses the explicit paper connector allowlist, not
+            # stored credential filenames. Live mode retains credential discovery.
+            connector_names = self.list_connectors_to_initialize(account_name)
 
             for connector_name in connector_names:
-                if paper_only and not is_paper_trade_connector_name(connector_name):
-                    logger.info(
-                        "Skipping stored live connector credentials for %s/%s while "
-                        "SPECTRA_PAPER_ONLY is enabled; credentials are preserved",
-                        account_name,
-                        connector_name,
-                    )
-                    continue
                 try:
                     logger.info(f"Initializing connector: {account_name}/{connector_name}")
                     await self.get_trading_connector(account_name, connector_name)
