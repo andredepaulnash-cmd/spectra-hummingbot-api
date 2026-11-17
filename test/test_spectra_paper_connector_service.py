@@ -132,9 +132,10 @@ def test_paper_trading_connector_shares_keyless_market_data_tracker_and_balances
 
     service = FakeService.__new__(FakeService)
     service.secrets_manager = object()
+    # Hummingbot settings contain the base exchange, not the paper wrapper.
+    # The paper branch must therefore run before the Gateway fallback.
     service._conn_settings = {
         "kraken": object(),
-        "kraken_paper_trade": object(),
     }
 
     connector = service._create_trading_connector(
@@ -707,3 +708,34 @@ async def test_paper_only_startup_scan_skips_live_credentials_without_deleting_t
         "kraken_paper_trade",
     ]
 
+
+
+
+def test_paper_startup_selection_uses_explicit_allowlist_not_credentials(monkeypatch):
+    monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
+    monkeypatch.setenv("SPECTRA_PAPER_CONNECTORS", "kraken_paper_trade")
+    monkeypatch.setattr(
+        "services.unified_connector_service.fs_util.list_files",
+        lambda _path: ["kraken.yml"],
+    )
+    service = UnifiedConnectorService.__new__(UnifiedConnectorService)
+
+    assert service.list_connectors_to_initialize("master_account") == [
+        "kraken_paper_trade"
+    ]
+    assert service.list_connectors_to_initialize("secondary_account") == []
+
+
+def test_live_startup_selection_uses_existing_credential_discovery(monkeypatch):
+    monkeypatch.setenv("SPECTRA_PAPER_ONLY", "false")
+    monkeypatch.setenv("SPECTRA_ALLOW_LIVE_EXECUTION", "true")
+    monkeypatch.setattr(
+        "services.unified_connector_service.fs_util.list_files",
+        lambda _path: ["kraken.yml", "binance.yml"],
+    )
+    service = UnifiedConnectorService.__new__(UnifiedConnectorService)
+
+    assert service.list_connectors_to_initialize("master_account") == [
+        "kraken",
+        "binance",
+    ]
