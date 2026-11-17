@@ -617,6 +617,18 @@ app.include_router(executors.router, dependencies=[Depends(auth_user)])
 
 # WebSocket router (handles its own auth)
 
+
+@app.get("/spectra/health", dependencies=[Depends(auth_user)])
+async def spectra_alpha2_health():
+    """Authenticated readiness probe for the isolated Alpha 2.0 paper stack."""
+    paper_only = os.getenv("SPECTRA_PAPER_ONLY", "").strip().lower() == "true"
+    live_disabled = os.getenv("SPECTRA_ALLOW_LIVE_EXECUTION", "").strip().lower() == "false"
+    paper_connector = os.getenv("SPECTRA_PAPER_CONNECTORS", "").strip() == "kraken_paper_trade"
+    receipts_required = os.getenv("SPECTRA_REQUIRE_CORE_RECEIPTS", "").strip().lower() == "true"
+    if not all((paper_only, live_disabled, paper_connector, receipts_required)):
+        raise HTTPException(status_code=503, detail="Alpha 2.0 paper safety configuration is not ready")
+    return {"status": "ok", "paper_only": True, "live_execution": False, "connector": "kraken_paper_trade"}
+
 @app.get("/spectra/dispatch-receipts/{proposal_id}", dependencies=[Depends(auth_user)])
 async def get_spectra_dispatch_receipt_result(proposal_id: str):
     """Recover the durable Hummingbot order ID after a lost HTTP response."""
