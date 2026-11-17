@@ -150,6 +150,7 @@ class CredentialConnectorService:
 @pytest.mark.asyncio
 async def test_paper_only_account_scan_preserves_but_never_initializes_live_credentials(monkeypatch):
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
+    monkeypatch.setenv("SPECTRA_ALLOW_LIVE_EXECUTION", "false")
     monkeypatch.setenv("SPECTRA_PAPER_CONNECTORS", "kraken_paper_trade")
     connector_service = CredentialConnectorService(
         ["kraken", "kraken_paper_trade"]
