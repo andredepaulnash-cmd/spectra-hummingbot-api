@@ -90,6 +90,8 @@ jobs:
           repository: andredepaulnash-cmd/spectra-finance-core
           ref: spectra-finance-alpha-2.0
           path: spectra-core
+      - name: Install Alpha 2.0 Core package
+        run: python -m pip install -e ./spectra-core
       - name: Prepare paper-only runtime configuration
         shell: bash
         run: |
@@ -355,27 +357,18 @@ jobs:
           set +a
           export PYTHONPATH="$PWD/spectra-core:${PYTHONPATH:-}"
           python - <<'PY'
-          import base64
           import json
           import os
           import subprocess
           import time
           from decimal import Decimal
           from pathlib import Path
-          from spectra_core.dispatch_receipt import issue_executor_dispatch_receipt
+          from spectra_alpha2.governor import CapitalGovernor
+          from spectra_alpha2.market_data import MarketCandidate
+          from spectra_alpha2.order_builder import build_buy_limit_order
+          from spectra_alpha2.policy import BUY_FEE_RATE
 
           auth = os.environ["API_AUTH"]
-          api_user, api_password = auth.split(":", 1)
-          body = {
-              "account_name": "master_account",
-              "connector_name": "kraken_paper_trade",
-              "trading_pair": "BTC-USDT",
-              "trade_type": "BUY",
-              "amount": "0.0001",
-              "order_type": "MARKET",
-              "price": None,
-              "position_action": "OPEN",
-          }
 
           def request(path, payload=None, receipt=None):
               command = ["curl", "-sS", "-u", auth, "-H", "Content-Type: application/json"]
@@ -386,10 +379,7 @@ jobs:
               command += ["-w", "__SPECTRA_HTTP_STATUS__:%{http_code}", "http://127.0.0.1:8000" + path]
               completed = subprocess.run(command, text=True, capture_output=True)
               if completed.returncode:
-                  raise RuntimeError(
-                      f"Transport failed for {path} (curl exit {completed.returncode}): "
-                      f"{completed.stderr}"
-                  )
+                  raise RuntimeError(f"Transport failed for {path}: {completed.stderr}")
               marker = "__SPECTRA_HTTP_STATUS__:"
               if marker not in completed.stdout:
                   raise RuntimeError(f"Missing HTTP status for {path}: {completed.stdout!r}")
@@ -397,10 +387,59 @@ jobs:
               status = int(status_text.strip())
               if status >= 400:
                   raise RuntimeError(f"HTTP {status} from {path}: {response_body}")
-              try:
-                  return json.loads(response_body)
-              except json.JSONDecodeError as exc:
-                  raise RuntimeError(f"Invalid JSON from {path}: {response_body!r}") from exc
+              return json.loads(response_body) if response_body else {}
+
+          pair = "BTC-USDT"
+          rules = request(f"/connectors/kraken_paper_trade/trading-rules?trading_pairs={pair}")
+          rule = rules[pair]
+          book = request("/market-data/order-book", {
+              "connector_name": "kraken_paper_trade",
+              "trading_pair": pair,
+              "depth": 5,
+          })
+          bids, asks = book.get("bids", []), book.get("asks", [])
+          assert bids and asks, book
+          best_bid = Decimal(str(bids[0]["price"]))
+          best_ask = Decimal(str(asks[0]["price"]))
+          now = time.time()
+          candidate = MarketCandidate(
+              trading_pair=pair,
+              base_asset="BTC",
+              quote_asset="USDT",
+              last_price=best_ask,
+              best_bid=best_bid,
+              best_ask=best_ask,
+              quote_volume_24h=Decimal("1000000"),
+              base_volume_24h=Decimal("10"),
+              spread_fraction=(best_ask-best_bid)/((best_ask+best_bid)/Decimal("2")),
+              ticker_timestamp=now,
+              min_order_size=Decimal(str(rule["min_order_size"])),
+              min_notional_size=Decimal(str(rule["min_notional_size"])),
+              base_amount_increment=Decimal(str(rule["min_base_amount_increment"])),
+              price_increment=Decimal(str(rule["min_price_increment"])),
+          )
+
+          governor = CapitalGovernor(
+              Path(os.environ["RUNNER_TEMP"]) / "spectra-alpha2-paper.sqlite3",
+              environment=dict(os.environ),
+          )
+          authorization = governor.reserve_initial_position(
+              position_id="ci-btc-usdt",
+              asset_id=pair,
+              reference_price=best_ask,
+              idempotency_key="ci-paper-initial-entry",
+          )
+          draft = build_buy_limit_order(candidate, gross_quote_budget=authorization.gross_notional)
+          governor.consume_authorization(
+              authorization.authorization_id,
+              idempotency_key=authorization.idempotency_key,
+              connector="kraken_paper_trade",
+          )
+          receipt = governor.issue_dispatch_receipt(
+              authorization.authorization_id,
+              request_body=draft.request_body,
+              now=time.time(),
+          )
 
           portfolio_filter = {
               "account_names": ["master_account"],
@@ -409,34 +448,25 @@ jobs:
               "refresh": True,
           }
           before = request("/portfolio/state", portfolio_filter)
-          before_tokens = before.get("master_account", {}).get("kraken_paper_trade", [])
-          before_balances = {row["token"]: Decimal(str(row["units"])) for row in before_tokens}
-          assert before_balances.get("USDT", Decimal("0")) >= Decimal("10"), before
+          before_rows = before.get("master_account", {}).get("kraken_paper_trade", [])
+          before_balances = {row["token"]: Decimal(str(row["units"])) for row in before_rows}
+          assert before_balances.get("USDT", Decimal("0")) >= Decimal("20"), before
 
-          receipt = issue_executor_dispatch_receipt(
-              request_body=body,
-              proposal_id="ci-paper-order-" + str(int(time.time())),
-              intent="ENTRY",
-              amount_quote="10",
-              now=time.time(),
-              operation="place_trade",
-              method="POST",
-              path="/trading/orders",
-          )
-          order = request("/trading/orders", body, receipt.token)
+          order = request("/trading/orders", draft.request_body, receipt.token)
           order_id = order.get("order_id")
           assert order_id, order
-          print("Paper order accepted:", order_id)
+          governor.bind_order_id(authorization.authorization_id, order_id=order_id)
+          print("Core-authorized paper order accepted:", order_id)
 
           filters = {
               "account_names": ["master_account"],
               "connector_names": ["kraken_paper_trade"],
-              "trading_pairs": ["BTC-USDT"],
-              "limit": 50,
+              "trading_pairs": [pair],
+              "limit": 100,
           }
           deadline = time.time() + 90
           found_order = None
-          found_trade = None
+          found_trades = []
           after_balances = {}
           while time.time() < deadline:
               order_page = request("/trading/orders/search", filters)
@@ -446,35 +476,47 @@ jobs:
                   None,
               )
               trade_page = request("/trading/trades", filters)
-              found_trade = next(
-                  (row for row in trade_page.get("data", [])
-                   if row.get("order_id") == order_id),
-                  None,
-              )
+              found_trades = [row for row in trade_page.get("data", []) if row.get("order_id") == order_id]
               after = request("/portfolio/state", portfolio_filter)
-              rows = after.get("master_account", {}).get("kraken_paper_trade", [])
-              after_balances = {row["token"]: Decimal(str(row["units"])) for row in rows}
-              if found_order and found_order.get("status") == "FILLED" and found_trade:
+              after_rows = after.get("master_account", {}).get("kraken_paper_trade", [])
+              after_balances = {row["token"]: Decimal(str(row["units"])) for row in after_rows}
+              if found_order and found_order.get("status") == "FILLED" and found_trades:
                   if (
                       after_balances.get("BTC", Decimal("0")) > before_balances.get("BTC", Decimal("0"))
                       and after_balances.get("USDT", Decimal("0")) < before_balances.get("USDT", Decimal("0"))
                   ):
                       break
-              time.sleep(3)
+              time.sleep(2)
 
-          assert found_order is not None, {"order_id": order_id, "orders": order_page}
-          assert found_order.get("status") == "FILLED", found_order
-          assert found_trade is not None, {"order_id": order_id, "trades": trade_page}
+          assert found_order is not None and found_order.get("status") == "FILLED", found_order
+          assert found_trades, {"order_id": order_id, "trades": trade_page}
+          filled_quantity = sum((Decimal(str(row["amount"])) for row in found_trades), Decimal("0"))
+          gross = sum((Decimal(str(row["amount"])) * Decimal(str(row["price"])) for row in found_trades), Decimal("0"))
+          average_price = gross / filled_quantity
+          estimated_buy_fee = gross * BUY_FEE_RATE
+          governor.settle_fill(
+              authorization.authorization_id,
+              actual_gross_notional=gross,
+              actual_fee=estimated_buy_fee,
+              actual_quantity=filled_quantity,
+              average_price=average_price,
+          )
+          ledger = governor.snapshot()
+          assert ledger["open_positions"] == 1, ledger
+          assert ledger["open_lots"] == 1, ledger
+          assert ledger["pools"]["INITIAL"]["reserved"] == 0, ledger
+          assert ledger["pools"]["INITIAL"]["spent"] == gross + estimated_buy_fee, ledger
           assert after_balances.get("BTC", Decimal("0")) > before_balances.get("BTC", Decimal("0")), {
               "before": before_balances, "after": after_balances
           }
           assert after_balances.get("USDT", Decimal("0")) < before_balances.get("USDT", Decimal("0")), {
               "before": before_balances, "after": after_balances
           }
-          print("Verified: signed paper order filled; order/trade history and simulated BTC/USDT balances updated.")
-          print("BTC:", before_balances.get("BTC"), "->", after_balances.get("BTC"))
-          print("USDT:", before_balances.get("USDT"), "->", after_balances.get("USDT"))
+          print("Verified: Governor reservation -> Ed25519 receipt -> Kraken paper fill -> independent lot ledger.")
+          print("Order:", order_id, "quantity:", filled_quantity, "gross USDT:", gross, "estimated buy fee:", estimated_buy_fee)
+          print("Governor snapshot:", ledger)
           PY
+
       - name: Stop paper-only API stack
         if: always()
         run: docker compose -p spectra-ci -f docker-compose.alpha-ci.yml down -v || true
