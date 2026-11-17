@@ -685,6 +685,7 @@ async def test_paper_only_startup_scan_skips_live_credentials_without_deleting_t
     from services import unified_connector_service as module
 
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
+    monkeypatch.setenv("SPECTRA_PAPER_CONNECTORS", "kraken_paper_trade")
     monkeypatch.setattr(
         module.fs_util,
         "list_folders",
