@@ -206,7 +206,7 @@ def verify_and_consume_receipt(
             raise SpectraDispatchReceiptError("Paper trade amount must be positive")
         connector = str(body["connector_name"]).strip().lower()
         if connector != "kraken_paper_trade":
-            raise SpectraDispatchReceiptError("Direct trade receipts are restricted to paper-trade connectors")
+            raise SpectraDispatchReceiptError("Direct trade receipts are restricted to kraken_paper_trade")
         if body["trade_type"] not in {"BUY", "SELL"} or body["order_type"] not in {"LIMIT", "MARKET", "LIMIT_MAKER"}:
             raise SpectraDispatchReceiptError("Paper trade side or order type is unsupported")
         if body["order_type"] in {"LIMIT", "LIMIT_MAKER"} and body.get("price") is None:
