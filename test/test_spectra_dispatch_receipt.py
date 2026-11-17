@@ -81,7 +81,7 @@ def _body():
         "executor_config": {
             "type": "grid_executor",
             "connector_name": "kraken_paper_trade",
-            "trading_pair": "XRP-USD",
+            "trading_pair": "XRP-USDT",
             "total_amount_quote": "20",
         },
     }
@@ -389,7 +389,7 @@ def test_middleware_persists_order_id_for_lost_response_recovery(monkeypatch, tm
         "trading_pair":"BTC-USDT","trade_type":"BUY","amount":"0.001",
         "order_type":"LIMIT","price":"65000","position_action":"OPEN",
     }
-    token=_token(private,body,path="/trading/orders",operation="place_trade",
+    token=_token(private,body,now=time.time(),path="/trading/orders",operation="place_trade",
         connector_name="kraken_paper_trade",trading_pair="BTC-USDT",amount="65",intent="ENTRY")
     async def downstream(scope,receive,send):
         await receive()
