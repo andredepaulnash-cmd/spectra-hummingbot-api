@@ -244,7 +244,7 @@ jobs:
           print("Verified: Kraken paper connector initialized; live dispatch is unavailable.")
           PY
 
-      - name: Verify public Kraken BTC-USDTT trading rules
+      - name: Verify public Kraken BTC-USDT trading rules
         shell: bash
         run: |
           set -Eeuo pipefail
