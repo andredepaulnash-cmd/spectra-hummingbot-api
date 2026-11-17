@@ -1735,16 +1735,11 @@ class UnifiedConnectorService:
         return list(self._trading_connectors.get(account_name, {}).keys())
 
     def list_available_credentials(self, account_name: str) -> List[str]:
-        """List connector credentials available for an account."""
-        try:
-            files = fs_util.list_files(f"credentials/{account_name}/connectors")
-            connector_names = [
-                f.replace(".yml", "") for f in files if f.endswith(".yml")
-            ]
-            # Real-exchange credentials may be stored without authorizing execution.
-            return connector_names
-        except FileNotFoundError:
+        """Expose only the configured keyless paper connector; never enumerate key files."""
+        paper_only_enabled()
+        if account_name != "master_account":
             return []
+        return list(configured_paper_connectors())
 
     @staticmethod
     def get_connector_config_map(connector_name: str):
