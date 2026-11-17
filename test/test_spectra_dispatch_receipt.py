@@ -31,6 +31,13 @@ def _token(
 ):
     if operation == "create_executor":
         config_hash = receipts.canonical_body_sha256(body["executor_config"])
+    elif operation == "cancel_order":
+        client_order_id = path.strip("/").split("/")[-2]
+        config_hash = receipts.canonical_body_sha256({
+            "account_name": body.get("account_name", "paper-account"),
+            "connector_name": connector_name,
+            "client_order_id": client_order_id,
+        })
     elif operation == "stop_executor":
         config_hash = receipts.canonical_body_sha256({"executor_id": executor_id})
     else:
@@ -271,6 +278,50 @@ def test_missing_public_key_fails_closed(monkeypatch, tmp_path):
 def test_protected_mutation_route_classification(method, path, expected):
     assert receipts.protected_mutation(method, path) is expected
 
+
+
+def test_cancel_order_receipt_binds_exact_paper_account_and_order(monkeypatch, tmp_path):
+    private = _keypair(monkeypatch)
+    body = {}
+    path = "/trading/paper-account/kraken_paper_trade/orders/client-123/cancel"
+    token = _token(
+        private, body, path=path, operation="cancel_order",
+        connector_name="kraken_paper_trade", trading_pair="BTC-USDT",
+        amount="20", intent="CANCEL",
+    )
+    payload = receipts.verify_and_consume_receipt(
+        token, method="POST", path=path, body=body,
+        now=1001, db_path=tmp_path / "cancel.sqlite3",
+    )
+    assert payload["operation"] == "cancel_order"
+    assert payload["intent"] == "CANCEL"
+    with pytest.raises(receipts.SpectraDispatchReceiptError, match="already been consumed"):
+        receipts.verify_and_consume_receipt(
+            token, method="POST", path=path, body=body,
+            now=1002, db_path=tmp_path / "cancel.sqlite3",
+        )
+
+
+def test_cancel_order_receipt_rejects_non_kraken_paper_connector(monkeypatch, tmp_path):
+    private = _keypair(monkeypatch)
+    body = {}
+    path = "/trading/paper-account/binance_paper_trade/orders/client-123/cancel"
+    token = _token(
+        private, body, path=path, operation="cancel_order",
+        connector_name="binance_paper_trade", trading_pair="BTC-USDT",
+        amount="20", intent="CANCEL",
+    )
+    with pytest.raises(receipts.SpectraDispatchReceiptError, match="restricted to kraken_paper_trade"):
+        receipts.verify_and_consume_receipt(
+            token, method="POST", path=path, body=body,
+            now=1001, db_path=tmp_path / "cancel-live.sqlite3",
+        )
+
+
+def test_dispatch_receipt_verification_cannot_be_disabled(monkeypatch):
+    monkeypatch.setenv("SPECTRA_REQUIRE_CORE_RECEIPTS", "false")
+    with pytest.raises(RuntimeError, match="requires SPECTRA_REQUIRE_CORE_RECEIPTS=true"):
+        receipts.SpectraDispatchReceiptMiddleware(lambda *_args: None)
 
 def test_middleware_authenticates_before_consuming_receipt(monkeypatch, tmp_path):
     private = _keypair(monkeypatch)
