@@ -17,7 +17,7 @@ from services.gateway_wallet_service import GatewayWalletService, balance_entry
 from services.perpetual_trading_service import PerpetualTradingService
 from services.portfolio_analytics_service import PortfolioAnalyticsService
 from utils.file_system import fs_util
-from utils.spectra_paper_guard import paper_only_enabled
+from utils.spectra_paper_guard import is_paper_trade_connector_name, paper_only_enabled
 from utils.gateway_certs import build_client_ssl_context
 
 # Create module-specific logger
