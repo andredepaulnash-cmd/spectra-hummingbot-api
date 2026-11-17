@@ -172,7 +172,7 @@ def verify_and_consume_receipt(
             raise SpectraDispatchReceiptError("Spectra dispatch receipt account scope does not match")
         if not isinstance(config, dict):
             raise SpectraDispatchReceiptError("Executor configuration is not an object")
-        if str(config.get("connector_name") or "").strip().lower() != payload.get("connector_name"):
+        if str(config.get("connector_name") or "").strip().lower() != "kraken_paper_trade" or payload.get("connector_name") != "kraken_paper_trade":
             raise SpectraDispatchReceiptError("Spectra dispatch receipt connector scope does not match")
         if config.get("trading_pair") != payload.get("trading_pair"):
             raise SpectraDispatchReceiptError("Spectra dispatch receipt market scope does not match")
@@ -205,7 +205,7 @@ def verify_and_consume_receipt(
         if not trade_amount.is_finite() or trade_amount <= 0:
             raise SpectraDispatchReceiptError("Paper trade amount must be positive")
         connector = str(body["connector_name"]).strip().lower()
-        if not connector.endswith("_paper_trade"):
+        if connector != "kraken_paper_trade":
             raise SpectraDispatchReceiptError("Direct trade receipts are restricted to paper-trade connectors")
         if body["trade_type"] not in {"BUY", "SELL"} or body["order_type"] not in {"LIMIT", "MARKET", "LIMIT_MAKER"}:
             raise SpectraDispatchReceiptError("Paper trade side or order type is unsupported")
@@ -224,6 +224,24 @@ def verify_and_consume_receipt(
             or str(body["trading_pair"]) != payload.get("trading_pair")
         ):
             raise SpectraDispatchReceiptError("Paper trade receipt account, connector, or market scope does not match")
+    elif operation == "cancel_order":
+        match = re.fullmatch(r"/trading/([^/]+)/([^/]+)/orders/([^/]+)/cancel", expected_path)
+        if expected_method != "POST" or match is None:
+            raise SpectraDispatchReceiptError("Order cancellation receipt has an invalid HTTP scope")
+        account_name, connector_name, client_order_id = match.groups()
+        if connector_name != "kraken_paper_trade":
+            raise SpectraDispatchReceiptError("Order cancellation is restricted to kraken_paper_trade")
+        if not isinstance(body, dict) or body:
+            raise SpectraDispatchReceiptError("Order cancellation requires an empty request body")
+        expected_config_hash = canonical_body_sha256({
+            "account_name": account_name,
+            "connector_name": connector_name,
+            "client_order_id": client_order_id,
+        })
+        if payload.get("config_sha256") != expected_config_hash:
+            raise SpectraDispatchReceiptError("Order cancellation receipt identity digest does not match")
+        if payload.get("account_name") != account_name or payload.get("connector_name") != connector_name:
+            raise SpectraDispatchReceiptError("Order cancellation receipt account or connector scope does not match")
     else:
         raise SpectraDispatchReceiptError("Spectra dispatch receipt operation is unsupported")
 
@@ -322,10 +340,10 @@ class SpectraDispatchReceiptMiddleware:
         self.app = app
         self.username = username
         self.password = password
-        configured = os.getenv("SPECTRA_REQUIRE_CORE_RECEIPTS", "true").strip().lower()
-        if configured not in {"1", "true", "yes", "0", "false", "no"}:
-            raise RuntimeError("SPECTRA_REQUIRE_CORE_RECEIPTS must be an explicit boolean")
-        self.required = configured in {"1", "true", "yes"}
+        configured = os.getenv("SPECTRA_REQUIRE_CORE_RECEIPTS", "true")
+        if configured != "true":
+            raise RuntimeError("Alpha 2.0 requires SPECTRA_REQUIRE_CORE_RECEIPTS=true")
+        self.required = True
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") != "http":
