@@ -17,7 +17,7 @@ from services.gateway_wallet_service import GatewayWalletService, balance_entry
 from services.perpetual_trading_service import PerpetualTradingService
 from services.portfolio_analytics_service import PortfolioAnalyticsService
 from utils.file_system import fs_util
-from utils.spectra_paper_guard import is_paper_trade_connector_name, paper_only_enabled
+from utils.spectra_paper_guard import paper_only_enabled
 from utils.gateway_certs import build_client_ssl_context
 
 # Create module-specific logger
@@ -399,15 +399,8 @@ class AccountsService:
         initialized explicitly from SPECTRA_PAPER_CONNECTORS during startup and
         do not require credential files.
         """
-        for connector_name in self._connector_service.list_available_credentials(account_name):
-            if paper_only_enabled() and not is_paper_trade_connector_name(connector_name):
-                logger.info(
-                    "Skipping stored live connector credentials for %s/%s while "
-                    "SPECTRA_PAPER_ONLY is enabled; credentials are preserved",
-                    account_name,
-                    connector_name,
-                )
-                continue
+        connector_names = self._connector_service.list_connectors_to_initialize(account_name)
+        for connector_name in connector_names:
             try:
                 if not self._connector_service.is_trading_connector_initialized(account_name, connector_name):
                     await self._connector_service.get_trading_connector(account_name, connector_name)
