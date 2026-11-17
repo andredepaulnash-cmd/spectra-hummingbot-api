@@ -422,7 +422,7 @@ def test_paper_trade_receipt_rejects_live_connector_and_changed_order(monkeypatc
         private, body, path="/trading/orders", operation="place_trade",
         connector_name="kraken", trading_pair="BTC-USD", amount="65",
     )
-    with pytest.raises(receipts.SpectraDispatchReceiptError, match="paper-trade connectors"):
+    with pytest.raises(receipts.SpectraDispatchReceiptError, match="restricted to kraken_paper_trade"):
         receipts.verify_and_consume_receipt(
             live_token, method="POST", path="/trading/orders", body=body,
             now=1001, db_path=tmp_path / "live-trade.sqlite3",
