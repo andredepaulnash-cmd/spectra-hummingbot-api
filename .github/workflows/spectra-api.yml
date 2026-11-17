@@ -4,9 +4,11 @@ on:
   pull_request:
     branches:
       - main
+      - spectra-finance-alpha-2.0
   push:
     branches:
       - main
+      - spectra-finance-alpha-2.0
   workflow_dispatch:
 
 permissions:
@@ -86,7 +88,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: andredepaulnash-cmd/spectra-finance-core
-          ref: feat/governed-paper-order-dispatch-20261114
+          ref: spectra-finance-alpha-2.0
           path: spectra-core
       - name: Prepare paper-only runtime configuration
         shell: bash
@@ -111,7 +113,7 @@ jobs:
           SPECTRA_PAPER_CONNECTORS=kraken_paper_trade
           SPECTRA_ALLOW_LIVE_EXECUTION=false
           SPECTRA_REQUIRE_CORE_RECEIPTS=true
-          SPECTRA_DISPATCH_POLICY_VERSION=spectra-policy-v1
+          SPECTRA_DISPATCH_POLICY_VERSION=spectra-alpha2-v1
           EOF
           mkdir -p .emqx bots/credentials/master_account
           chmod 600 .env
@@ -242,7 +244,7 @@ jobs:
           print("Verified: Kraken paper connector initialized; live dispatch is unavailable.")
           PY
 
-      - name: Verify public Kraken BTC-USD trading rules
+      - name: Verify public Kraken BTC-USDT trading rules
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -409,7 +411,7 @@ jobs:
           before = request("/portfolio/state", portfolio_filter)
           before_tokens = before.get("master_account", {}).get("kraken_paper_trade", [])
           before_balances = {row["token"]: Decimal(str(row["units"])) for row in before_tokens}
-          assert before_balances.get("USD", Decimal("0")) >= Decimal("10"), before
+          assert before_balances.get("USDT", Decimal("0")) >= Decimal("10"), before
 
           receipt = issue_executor_dispatch_receipt(
               request_body=body,
@@ -455,7 +457,7 @@ jobs:
               if found_order and found_order.get("status") == "FILLED" and found_trade:
                   if (
                       after_balances.get("BTC", Decimal("0")) > before_balances.get("BTC", Decimal("0"))
-                      and after_balances.get("USD", Decimal("0")) < before_balances.get("USD", Decimal("0"))
+                      and after_balances.get("USDT", Decimal("0")) < before_balances.get("USD", Decimal("0"))
                   ):
                       break
               time.sleep(3)
@@ -471,7 +473,7 @@ jobs:
           }
           print("Verified: signed paper order filled; order/trade history and simulated BTC/USD balances updated.")
           print("BTC:", before_balances.get("BTC"), "->", after_balances.get("BTC"))
-          print("USD:", before_balances.get("USD"), "->", after_balances.get("USD"))
+          print("USDT:", before_balances.get("USDT"), "->", after_balances.get("USDT"))
           PY
       - name: Stop paper-only API stack
         if: always()
