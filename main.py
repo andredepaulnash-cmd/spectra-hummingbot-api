@@ -24,7 +24,7 @@ from utils.spectra_paper_guard import (  # noqa: E402
 # means paper-only; leaving paper mode requires the separate live authorization.
 SPECTRA_PAPER_ONLY = paper_only_enabled()
 
-VERSION = "1.0.1"
+VERSION = "2.0.0-alpha2"
 
 # Monkey patch save_to_yml to prevent writes to library directory
 
@@ -91,7 +91,7 @@ from services.unified_connector_service import UnifiedConnectorService  # noqa: 
 from services.websocket_manager import WebSocketManager  # noqa: E402
 from utils.bot_archiver import BotArchiver  # noqa: E402
 from utils.core_compatibility import require_core_surface  # noqa: E402
-from utils.spectra_dispatch_receipt import SpectraDispatchReceiptMiddleware  # noqa: E402
+from utils.spectra_dispatch_receipt import SpectraDispatchReceiptMiddleware, get_dispatch_receipt_result  # noqa: E402
 from utils.security import BackendAPISecurity  # noqa: E402
 
 # Set up logging configuration
@@ -616,6 +616,22 @@ app.include_router(system.router, dependencies=[Depends(auth_user)])
 app.include_router(executors.router, dependencies=[Depends(auth_user)])
 
 # WebSocket router (handles its own auth)
+
+@app.get("/spectra/dispatch-receipts/{proposal_id}", dependencies=[Depends(auth_user)])
+async def get_spectra_dispatch_receipt_result(proposal_id: str):
+    """Recover the durable Hummingbot order ID after a lost HTTP response."""
+    result = get_dispatch_receipt_result(proposal_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No consumed dispatch receipt exists for this Core proposal")
+    return {
+        "proposal_id": result["proposal_id"],
+        "receipt_id": result["receipt_id"],
+        "order_id": result["order_id"],
+        "response_status": result["response_status"],
+        "consumed_at": result["consumed_at"],
+        "expires_at": result["expires_at"],
+    }
+
 app.include_router(websocket.router)
 
 
