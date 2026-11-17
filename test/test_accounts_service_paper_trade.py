@@ -127,6 +127,18 @@ class CredentialConnectorService:
         assert account_name == "master_account"
         return self.credential_names
 
+    def list_connectors_to_initialize(self, account_name):
+        from utils.spectra_paper_guard import (
+            configured_paper_connectors,
+            paper_only_enabled,
+        )
+
+        if paper_only_enabled():
+            if account_name != "master_account":
+                return []
+            return list(configured_paper_connectors())
+        return self.list_available_credentials(account_name)
+
     def is_trading_connector_initialized(self, account_name, connector_name):
         return connector_name in self.initialized
 
@@ -138,6 +150,7 @@ class CredentialConnectorService:
 @pytest.mark.asyncio
 async def test_paper_only_account_scan_preserves_but_never_initializes_live_credentials(monkeypatch):
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
+    monkeypatch.setenv("SPECTRA_PAPER_CONNECTORS", "kraken_paper_trade")
     connector_service = CredentialConnectorService(
         ["kraken", "kraken_paper_trade"]
     )
