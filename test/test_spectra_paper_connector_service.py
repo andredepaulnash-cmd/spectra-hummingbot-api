@@ -44,38 +44,21 @@ def test_data_connector_creation_rejects_live_connector(monkeypatch):
     )
 
 
-def test_available_credentials_include_exchange_credentials_in_paper_mode(monkeypatch):
+def test_available_credentials_exposes_only_configured_paper_connector(monkeypatch):
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
-    monkeypatch.setattr(
-        "services.unified_connector_service.fs_util.list_files",
-        lambda _path: [
-            "kraken.yml",
-            "kraken_paper_trade.yml",
-            "binance_paper_trade.yml",
-            "kraken_perpetual.yml",
-        ],
-    )
+    monkeypatch.setenv("SPECTRA_ALLOW_LIVE_EXECUTION", "false")
+    monkeypatch.setenv("SPECTRA_PAPER_CONNECTORS", "kraken_paper_trade")
     service = UnifiedConnectorService.__new__(UnifiedConnectorService)
-    assert service.list_available_credentials("paper-account") == [
-        "kraken",
-        "kraken_paper_trade",
-        "binance_paper_trade",
-        "kraken_perpetual",
-    ]
+    assert service.list_available_credentials("master_account") == ["kraken_paper_trade"]
+    assert service.list_available_credentials("other-account") == []
 
 
-def test_legacy_credential_listing_is_unchanged_when_paper_mode_off(monkeypatch):
+def test_credential_listing_fails_closed_when_paper_mode_is_disabled(monkeypatch):
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "false")
     monkeypatch.setenv("SPECTRA_ALLOW_LIVE_EXECUTION", "true")
-    monkeypatch.setattr(
-        "services.unified_connector_service.fs_util.list_files",
-        lambda _path: ["kraken.yml", "kraken_paper_trade.yml"],
-    )
     service = UnifiedConnectorService.__new__(UnifiedConnectorService)
-    assert service.list_available_credentials("account") == [
-        "kraken",
-        "kraken_paper_trade",
-    ]
+    with pytest.raises(RuntimeError, match="SPECTRA_PAPER_ONLY=true"):
+        service.list_available_credentials("master_account")
 
 
 def test_paper_trading_connector_shares_keyless_market_data_tracker_and_balances(
@@ -123,7 +106,7 @@ def test_paper_trading_connector_shares_keyless_market_data_tracker_and_balances
         lambda _path: {
             "paper_trade": {
                 "paper_trade_account_balance": {
-                    "USD": 1000.0,
+                    "USDT": 1000.0,
                     "BTC": 0.0,
                 }
             }
@@ -149,7 +132,7 @@ def test_paper_trading_connector_shares_keyless_market_data_tracker_and_balances
         "target_market": "class:kraken",
         "exchange_name": "kraken",
     }
-    assert balances == [("USD", 1000.0), ("BTC", 0.0)]
+    assert balances == [("USDT", 1000.0), ("BTC", 0.0)]
 
 
 def test_paper_data_connector_uses_base_exchange_class_without_auth(monkeypatch):
