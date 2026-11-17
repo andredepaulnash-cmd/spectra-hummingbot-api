@@ -375,6 +375,44 @@ def test_middleware_authenticates_before_consuming_receipt(monkeypatch, tmp_path
 
 
 
+
+def test_middleware_persists_order_id_for_lost_response_recovery(monkeypatch, tmp_path):
+    private=_keypair(monkeypatch)
+    db=tmp_path/"response.sqlite3"
+    monkeypatch.setenv("SPECTRA_DISPATCH_RECEIPT_DB",str(db))
+    body={
+        "account_name":"master_account","connector_name":"kraken_paper_trade",
+        "trading_pair":"BTC-USDT","trade_type":"BUY","amount":"0.001",
+        "order_type":"LIMIT","price":"65000","position_action":"OPEN",
+    }
+    token=_token(private,body,path="/trading/orders",operation="place_trade",
+        connector_name="kraken_paper_trade",trading_pair="BTC-USDT",amount="65",intent="ENTRY")
+    async def downstream(scope,receive,send):
+        await receive()
+        payload=b'{"order_id":"paper-order-42","status":"submitted"}'
+        await send({"type":"http.response.start","status":201,"headers":[(b"content-type",b"application/json")]})
+        await send({"type":"http.response.body","body":payload})
+    middleware=receipts.SpectraDispatchReceiptMiddleware(downstream,username="user",password="pass")
+    async def invoke():
+        scope={"type":"http","method":"POST","path":"/trading/orders","headers":[
+            (b"x-spectra-dispatch-receipt",token.encode("ascii")),
+            (b"authorization",b"Basic "+base64.b64encode(b"user:pass")),
+        ],"state":{}}
+        messages=[{"type":"http.request","body":receipts.canonical_json(body),"more_body":False}]
+        sent=[]
+        async def receive():
+            return messages.pop(0) if messages else {"type":"http.request","body":b"","more_body":False}
+        async def send(message):
+            sent.append(message)
+        await middleware(scope,receive,send)
+        return sent
+    sent=asyncio.run(invoke())
+    assert sent[0]["status"]==201
+    stored=receipts.get_dispatch_receipt_result("proposal-123",db_path=db)
+    assert stored["order_id"]=="paper-order-42"
+    assert stored["response_status"]==201
+
+
 def test_paper_trade_receipt_authorizes_exact_paper_order_once(monkeypatch, tmp_path):
     private = _keypair(monkeypatch)
     body = {
