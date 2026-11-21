@@ -386,7 +386,7 @@ def test_middleware_persists_order_id_for_lost_response_recovery(monkeypatch, tm
     monkeypatch.setenv("SPECTRA_DISPATCH_RECEIPT_DB",str(db))
     body={
         "account_name":"master_account","connector_name":"kraken_paper_trade",
-        "trading_pair":"BTC-USDT","trade_type":"BUY","amount":"0.001",
+        "trading_pair":"BTC-USDT","trade_type":"BUY","strategy_origin":"TOP_GAINER","amount":"0.001",
         "order_type":"MARKET","max_execution_price":"65000","position_action":"OPEN",
     }
     token=_token(private,body,now=time.time(),path="/trading/orders",operation="place_trade",
@@ -424,6 +424,7 @@ def test_paper_trade_receipt_authorizes_exact_paper_order_once(monkeypatch, tmp_
         "connector_name": "kraken_paper_trade",
         "trading_pair": "BTC-USDT",
         "trade_type": "BUY",
+        "strategy_origin": "TOP_GAINER",
         "amount": "0.001",
         "order_type": "MARKET",
         "price": None,
@@ -456,6 +457,7 @@ def test_paper_trade_receipt_rejects_live_connector_and_changed_order(monkeypatc
         "connector_name": "kraken",
         "trading_pair": "BTC-USDT",
         "trade_type": "BUY",
+        "strategy_origin": "TOP_GAINER",
         "amount": "0.001",
         "order_type": "MARKET",
         "price": None,

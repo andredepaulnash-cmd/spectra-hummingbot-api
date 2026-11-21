@@ -194,7 +194,7 @@ def verify_and_consume_receipt(
             raise SpectraDispatchReceiptError("Paper trade receipt must target POST /trading/orders")
         if not isinstance(body, dict):
             raise SpectraDispatchReceiptError("Paper trade receipt requires an object body")
-        required_trade_fields = ("account_name", "connector_name", "trading_pair", "trade_type", "amount", "order_type", "position_action")
+        required_trade_fields = ("account_name", "connector_name", "trading_pair", "trade_type", "strategy_origin", "amount", "order_type", "position_action")
         if any(body.get(field) in (None, "") for field in required_trade_fields):
             raise SpectraDispatchReceiptError("Paper trade receipt is missing required order fields")
         if not isinstance(body.get("amount"), (str, int, float)) or isinstance(body.get("amount"), bool):
@@ -208,6 +208,8 @@ def verify_and_consume_receipt(
         connector = str(body["connector_name"]).strip().lower()
         if connector != "kraken_paper_trade":
             raise SpectraDispatchReceiptError("Direct trade receipts are restricted to kraken_paper_trade")
+        if body.get("strategy_origin") not in {"TOP_GAINER","TOP_LOSER_REVERSAL"}:
+            raise SpectraDispatchReceiptError("Paper trade strategy origin is unsupported")
         if body["trade_type"] not in {"BUY", "SELL"}:
             raise SpectraDispatchReceiptError("Paper trade side is unsupported")
         if body["trade_type"] == "BUY":
