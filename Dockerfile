@@ -12,6 +12,9 @@ WORKDIR /build
 # Copy only the environment file first (for better layer caching)
 COPY environment.yml .
 
+# Retry transient package-index/download failures during the expensive image build.
+ENV PIP_DEFAULT_TIMEOUT=60 PIP_RETRIES=10 PIP_DISABLE_PIP_VERSION_CHECK=1
+
 # Create the conda environment
 RUN conda env create -f environment.yml && \
     conda clean -afy && \
