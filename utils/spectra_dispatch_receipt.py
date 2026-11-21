@@ -208,10 +208,23 @@ def verify_and_consume_receipt(
         connector = str(body["connector_name"]).strip().lower()
         if connector != "kraken_paper_trade":
             raise SpectraDispatchReceiptError("Direct trade receipts are restricted to kraken_paper_trade")
-        if body["trade_type"] not in {"BUY", "SELL"} or body["order_type"] not in {"LIMIT", "MARKET", "LIMIT_MAKER"}:
-            raise SpectraDispatchReceiptError("Paper trade side or order type is unsupported")
-        if body["order_type"] in {"LIMIT", "LIMIT_MAKER"} and body.get("price") is None:
-            raise SpectraDispatchReceiptError("Paper limit trade receipt requires a price")
+        if body["trade_type"] not in {"BUY", "SELL"}:
+            raise SpectraDispatchReceiptError("Paper trade side is unsupported")
+        if body["trade_type"] == "BUY":
+            if body["order_type"] != "MARKET" or body.get("price") is not None:
+                raise SpectraDispatchReceiptError("Alpha 2.0 purchases must be MARKET BUY orders without a limit price")
+            try:
+                maximum_execution_price = Decimal(str(body.get("max_execution_price")))
+                authorized_quote = Decimal(str(payload.get("amount")))
+            except (InvalidOperation, ValueError) as exc:
+                raise SpectraDispatchReceiptError("MARKET BUY quote ceiling is invalid") from exc
+            if not maximum_execution_price.is_finite() or maximum_execution_price <= 0:
+                raise SpectraDispatchReceiptError("MARKET BUY requires a positive maximum execution price")
+            if trade_amount * maximum_execution_price > authorized_quote:
+                raise SpectraDispatchReceiptError("MARKET BUY quantity at its signed price ceiling exceeds the authorized quote amount")
+        else:
+            if body["order_type"] != "LIMIT" or body.get("price") is None:
+                raise SpectraDispatchReceiptError("Alpha 2.0 exits must be LIMIT SELL orders")
         expected_scope = {
             key: body.get(key)
             for key in ("account_name", "connector_name", "trading_pair", "trade_type", "amount", "order_type", "price", "position_action")
