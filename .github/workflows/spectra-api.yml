@@ -365,7 +365,7 @@ jobs:
           from pathlib import Path
           from spectra_alpha2.governor import CapitalGovernor
           from spectra_alpha2.market_data import MarketCandidate
-          from spectra_alpha2.order_builder import build_buy_limit_order
+          from spectra_alpha2.order_builder import build_buy_market_order
           from spectra_alpha2.policy import BUY_FEE_RATE
 
           auth = os.environ["API_AUTH"]
@@ -429,7 +429,7 @@ jobs:
               reference_price=best_ask,
               idempotency_key="ci-paper-initial-entry",
           )
-          draft = build_buy_limit_order(candidate, gross_quote_budget=authorization.gross_notional)
+          draft = build_buy_market_order(candidate, gross_quote_budget=authorization.gross_notional)
           governor.consume_authorization(
               authorization.authorization_id,
               idempotency_key=authorization.idempotency_key,
