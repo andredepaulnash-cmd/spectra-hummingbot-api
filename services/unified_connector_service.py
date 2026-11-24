@@ -651,8 +651,18 @@ class UnifiedConnectorService:
         validation_connector = data_connector if is_paper_trade else connector
 
         # Validate before registering the pair with the order-book tracker.
-        # Symbol-map failures are fail-closed in _is_trading_pair_supported().
-        if not await self._is_trading_pair_supported(validation_connector, trading_pair):
+        # Serialize lazy symbol-map initialization too: concurrent scanner
+        # candidates share this one public connector and its symbol-map cache.
+        if is_paper_trade:
+            async with self._data_connector_lock(connector_name):
+                pair_supported = await self._is_trading_pair_supported(
+                    validation_connector, trading_pair
+                )
+        else:
+            pair_supported = await self._is_trading_pair_supported(
+                validation_connector, trading_pair
+            )
+        if not pair_supported:
             logger.error(
                 f"Trading pair {trading_pair} is not listed or could not be validated on "
                 f"{connector_name} - refusing to register it"
