@@ -1311,6 +1311,19 @@ class UnifiedConnectorService:
     # Order Management
     # =========================================================================
 
+    @staticmethod
+    def _get_supported_in_flight_orders(connector):
+        """Return the connector's in-flight order map when implemented.
+
+        Hummingbot PaperTradeExchange does not implement ConnectorBase.in_flight_orders.
+        Paper fills are persisted by OrdersRecorder event listeners instead, so
+        database polling must skip this optional connector interface.
+        """
+        try:
+            return connector.in_flight_orders
+        except (NotImplementedError, AttributeError):
+            return None
+
     async def _load_existing_orders(
         self,
         connector: ConnectorBase,
@@ -1318,6 +1331,13 @@ class UnifiedConnectorService:
         connector_name: str
     ):
         """Load existing orders from database into connector."""
+        in_flight_orders = self._get_supported_in_flight_orders(connector)
+        if in_flight_orders is None:
+            logger.debug(
+                "Skipping in-flight order restore for %s/%s; connector does not expose this interface",
+                account_name, connector_name,
+            )
+            return
         try:
             from database import OrderRepository
 
@@ -1334,12 +1354,12 @@ class UnifiedConnectorService:
                 for order_record in active_orders:
                     try:
                         in_flight_order = self._convert_db_order_to_in_flight(order_record)
-                        connector.in_flight_orders[in_flight_order.client_order_id] = in_flight_order
+                        in_flight_orders[in_flight_order.client_order_id] = in_flight_order
                     except Exception as e:
                         logger.error(f"Error loading order {order_record.client_order_id}: {e}")
 
                 logger.info(
-                    f"Loaded {len(connector.in_flight_orders)} orders for "
+                    f"Loaded {len(in_flight_orders)} orders for "
                     f"{account_name}/{connector_name}"
                 )
 
@@ -1545,7 +1565,8 @@ class UnifiedConnectorService:
         task_keys = []
         for account_name, connectors in self._trading_connectors.items():
             for connector_name, connector in connectors.items():
-                if not connector.in_flight_orders:
+                in_flight_orders = self._get_supported_in_flight_orders(connector)
+                if not in_flight_orders:
                     continue
                 tasks.append(self._sync_orders_to_database(connector, account_name, connector_name))
                 task_keys.append(f"{account_name}/{connector_name}")
