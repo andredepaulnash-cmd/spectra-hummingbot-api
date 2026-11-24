@@ -31,6 +31,33 @@ async def test_trading_connector_creation_rejects_live_connector(monkeypatch):
     service._create_and_initialize_trading_connector.assert_awaited_once()
 
 
+def test_paper_trade_connector_without_inflight_orders_is_skipped():
+    class PaperTradeConnector:
+        @property
+        def in_flight_orders(self):
+            raise NotImplementedError
+
+    connector = PaperTradeConnector()
+    service = UnifiedConnectorService.__new__(UnifiedConnectorService)
+    assert service._get_supported_in_flight_orders(connector) is None
+
+
+@pytest.mark.asyncio
+async def test_paper_trade_order_sync_skips_unsupported_inflight_orders():
+    class PaperTradeConnector:
+        @property
+        def in_flight_orders(self):
+            raise NotImplementedError
+
+    service = UnifiedConnectorService.__new__(UnifiedConnectorService)
+    service._trading_connectors = {
+        "master_account": {"kraken_paper_trade": PaperTradeConnector()}
+    }
+    # Event-based OrdersRecorder persists PaperTradeExchange fills; no polling
+    # connector map is available on this Hummingbot connector implementation.
+    await service.sync_all_orders_to_database()
+
+
 def test_data_connector_creation_rejects_live_connector(monkeypatch):
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
     monkeypatch.setenv("SPECTRA_ALLOW_LIVE_EXECUTION", "false")
@@ -109,7 +136,7 @@ def test_paper_trading_connector_shares_keyless_market_data_tracker_and_balances
         lambda _path: {
             "paper_trade": {
                 "paper_trade_account_balance": {
-                    "USDT": 1000.0,
+                    "USD": 1000.0,
                     "BTC": 0.0,
                 }
             }
@@ -135,7 +162,7 @@ def test_paper_trading_connector_shares_keyless_market_data_tracker_and_balances
         "target_market": "class:kraken",
         "exchange_name": "kraken",
     }
-    assert balances == [("USDT", 1000.0), ("BTC", 0.0)]
+    assert balances == [("USD", 1000.0), ("BTC", 0.0)]
 
 
 def test_paper_data_connector_uses_base_exchange_class_without_auth(monkeypatch):
