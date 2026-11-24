@@ -683,20 +683,44 @@ class UnifiedConnectorService:
         # after the tracker has a valid snapshot.
         if not await self._wait_for_order_book(tracker, trading_pair, timeout):
             return False
-        return self._ensure_paper_trade_market_ready(connector_name, connector)
+        return self._ensure_paper_trade_market_ready(connector_name, connector, trading_pair)
 
     def _ensure_paper_trade_market_ready(
-        self, connector_name: str, connector
+        self, connector_name: str, connector, trading_pair: str
     ) -> bool:
         if not connector_name.endswith("_paper_trade"):
             return True
         try:
+            # PaperTradeExchange snapshots order_book_tracker.order_books into
+            # its private _trading_pairs map during construction. Adding a new
+            # order book later does not update that map automatically. Refresh
+            # it after the underlying tracker has the validated pair.
+            initialize_market = getattr(connector, "init_paper_trade_market", None)
+            if not callable(initialize_market):
+                logger.error(
+                    "PaperTradeExchange %s does not expose init_paper_trade_market",
+                    connector_name,
+                )
+                return False
+            initialize_market()
+            if trading_pair not in getattr(connector, "trading_pairs", []):
+                logger.error(
+                    "PaperTradeExchange %s did not register newly initialized pair %s",
+                    connector_name,
+                    trading_pair,
+                )
+                return False
             if not connector.ready:
                 logger.error(
                     "Native paper market for %s did not become ready",
                     connector_name,
                 )
                 return False
+            logger.info(
+                "Native paper market ready for %s with %s",
+                connector_name,
+                trading_pair,
+            )
             return True
         except Exception as e:
             logger.error(
