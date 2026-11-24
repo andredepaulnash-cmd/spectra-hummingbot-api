@@ -31,6 +31,35 @@ async def test_trading_connector_creation_rejects_live_connector(monkeypatch):
     service._create_and_initialize_trading_connector.assert_awaited_once()
 
 
+def test_paper_trade_market_refresh_registers_newly_initialized_pair():
+    class PaperTradeConnector:
+        ready = True
+
+        def __init__(self):
+            self.trading_pairs = []
+
+        def init_paper_trade_market(self):
+            self.trading_pairs.append("BTC-USD")
+
+    service = UnifiedConnectorService.__new__(UnifiedConnectorService)
+    connector = PaperTradeConnector()
+    assert service._ensure_paper_trade_market_ready(
+        "kraken_paper_trade", connector, "BTC-USD"
+    ) is True
+    assert connector.trading_pairs == ["BTC-USD"]
+
+
+def test_paper_trade_market_refresh_fails_closed_without_initializer():
+    class PaperTradeConnector:
+        ready = True
+        trading_pairs = []
+
+    service = UnifiedConnectorService.__new__(UnifiedConnectorService)
+    assert service._ensure_paper_trade_market_ready(
+        "kraken_paper_trade", PaperTradeConnector(), "BTC-USD"
+    ) is False
+
+
 def test_paper_trade_connector_without_inflight_orders_is_skipped():
     class PaperTradeConnector:
         @property
