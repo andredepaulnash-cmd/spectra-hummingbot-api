@@ -609,7 +609,7 @@ class UnifiedConnectorService:
                 if len(bids) > 0 and len(asks) > 0:
                     logger.info(f"Order book for {trading_pair} already initialized")
                     return self._ensure_paper_trade_market_ready(
-                        connector_name, connector
+                        connector_name, connector, trading_pair
                     )
             except Exception:
                 pass
@@ -651,7 +651,7 @@ class UnifiedConnectorService:
             ):
                 return False
             return self._ensure_paper_trade_market_ready(
-                connector_name, connector
+                connector_name, connector, trading_pair
             )
 
         # For data connectors, ensure network is started
