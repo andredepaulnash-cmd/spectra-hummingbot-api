@@ -53,10 +53,11 @@ class FakeConnector:
 class KrakenFakeConnector(FakeConnector):
     async def get_asset_pairs(self):
         return {
-            "BTC-USD": {
+            "XXBTZUSD": {
                 "base": "XXBT",
                 "quote": "ZUSD",
                 "altname": "XBTUSD",
+                "wsname": "XBT/USD",
             }
         }
 
