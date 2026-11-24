@@ -246,28 +246,28 @@ jobs:
           print("Verified: Kraken paper connector initialized; live dispatch is unavailable.")
           PY
 
-      - name: Verify public Kraken BTC-USDT trading rules
+      - name: Verify public Kraken BTC-USD trading rules
         shell: bash
         run: |
           set -Eeuo pipefail
-          curl -fsS -u "$API_AUTH" "http://127.0.0.1:8000/connectors/kraken_paper_trade/trading-rules?trading_pairs=BTC-USDT" > "$RUNNER_TEMP/kraken-paper-rules.json"
+          curl -fsS -u "$API_AUTH" "http://127.0.0.1:8000/connectors/kraken_paper_trade/trading-rules?trading_pairs=BTC-USD" > "$RUNNER_TEMP/kraken-paper-rules.json"
           python - <<'PY'
           import json, os
           from pathlib import Path
           rules = json.loads(Path(os.environ["RUNNER_TEMP"] + "/kraken-paper-rules.json").read_text())
-          assert "BTC-USDT" in rules, rules
-          assert rules["BTC-USDT"]["min_order_size"] > 0, rules
-          assert rules["BTC-USDT"]["supports_limit_orders"] is True, rules
-          print("Verified: public BTC-USDT trading rules are available to the paper connector.")
+          assert "BTC-USD" in rules, rules
+          assert rules["BTC-USD"]["min_order_size"] > 0, rules
+          assert rules["BTC-USD"]["supports_limit_orders"] is True, rules
+          print("Verified: public BTC-USD trading rules are available to the paper connector.")
           PY
 
-      - name: Request Kraken paper BTC-USDT pair initialization
+      - name: Request Kraken paper BTC-USD pair initialization
         id: pair_init
         shell: bash
         run: |
           set -Eeuo pipefail
           status="$(curl -sS -u "$API_AUTH" -H "Content-Type: application/json" \
-            -d '{"connector_name":"kraken_paper_trade","trading_pair":"BTC-USDT","account_name":"master_account","timeout":30}' \
+            -d '{"connector_name":"kraken_paper_trade","trading_pair":"BTC-USD","account_name":"master_account","timeout":30}' \
             -o "$RUNNER_TEMP/kraken-paper-pair.json" -w '%{http_code}' \
             http://127.0.0.1:8000/market-data/trading-pair/add || true)"
           summary="$(python -c 'import json,sys; from pathlib import Path; p=Path(sys.argv[1]); d=json.loads(p.read_text()) if p.exists() else {}; print(str(d.get("message") or d.get("detail") or d.get("error") or d.get("success"))[:140].replace("\\n"," "))' "$RUNNER_TEMP/kraken-paper-pair.json")"
@@ -298,18 +298,18 @@ jobs:
         run: |
           set -Eeuo pipefail
           curl -fsS -u "$API_AUTH" -H "Content-Type: application/json" \
-            -d '{"connector_name":"kraken_paper_trade","trading_pair":"BTC-USDT","depth":5}' \
+            -d '{"connector_name":"kraken_paper_trade","trading_pair":"BTC-USD","depth":5}' \
             http://127.0.0.1:8000/market-data/order-book > "$RUNNER_TEMP/kraken-paper-book.json"
           python - <<'PY'
           import json, os
           from pathlib import Path
           book = json.loads(Path(os.environ["RUNNER_TEMP"] + "/kraken-paper-book.json").read_text())
-          assert book["trading_pair"] == "BTC-USDT", book
+          assert book["trading_pair"] == "BTC-USD", book
           assert book["bids"] and book["asks"], book
-          print("Verified: paper adapter exposes public BTC-USDT bid/ask data.")
+          print("Verified: paper adapter exposes public BTC-USD bid/ask data.")
           PY
           status="$(curl -sS -u "$API_AUTH" -H "Content-Type: application/json" \
-            -d '{"connector_name":"kraken_paper_trade","trading_pairs":["BTC-USDT"]}' \
+            -d '{"connector_name":"kraken_paper_trade","trading_pairs":["BTC-USD"]}' \
             -o "$RUNNER_TEMP/kraken-paper-prices.json" -w '%{http_code}' \
             http://127.0.0.1:8000/market-data/prices || true)"
           summary="$(python -c 'import json,sys; from pathlib import Path; p=Path(sys.argv[1]); d=json.loads(p.read_text()) if p.exists() else {}; print(str(d.get("detail") or d.get("error") or d.get("prices") or d.get("success"))[:140].replace(chr(10)," "))' "$RUNNER_TEMP/kraken-paper-prices.json")"
@@ -334,7 +334,7 @@ jobs:
           from pathlib import Path
           result = json.loads(Path(os.environ["RUNNER_TEMP"] + "/kraken-paper-prices.json").read_text())
           assert result.get("connector") == "kraken_paper_trade", result
-          assert result.get("prices", {}).get("BTC-USDT", 0) > 0, result
+          assert result.get("prices", {}).get("BTC-USD", 0) > 0, result
           print("Verified: paper price reads use the keyless public ticker adapter.")
           PY
           grep -q 'SPECTRA_PAPER_ONLY=true' .env
@@ -389,7 +389,7 @@ jobs:
                   raise RuntimeError(f"HTTP {status} from {path}: {response_body}")
               return json.loads(response_body) if response_body else {}
 
-          pair = "BTC-USDT"
+          pair = "BTC-USD"
           rules = request(f"/connectors/kraken_paper_trade/trading-rules?trading_pairs={pair}")
           rule = rules[pair]
           book = request("/market-data/order-book", {
