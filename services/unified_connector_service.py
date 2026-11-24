@@ -1344,7 +1344,7 @@ class UnifiedConnectorService:
                 )
 
         except Exception as e:
-            logger.error(f"Error loading orders from database: {e}")
+            logger.exception("Error loading orders from database")
 
     async def _sync_orders_to_database(
         self,
