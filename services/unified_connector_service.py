@@ -87,6 +87,9 @@ class UnifiedConnectorService:
         # Locks to prevent race conditions in connector creation
         self._connector_locks: Dict[str, asyncio.Lock] = {}
 
+        # Serialize shared public data-connector startup and dynamic pair registration.
+        self._data_connector_locks: Dict[str, asyncio.Lock] = {}
+
         # Native PaperTradeExchange requires Hummingbot clock ticks to process
         # queued market orders and crossed limit orders. One managed realtime
         # clock advances every paper connector owned by this API process.
@@ -323,7 +326,30 @@ class UnifiedConnectorService:
             )
         return self._data_connectors[connector_name]
 
+    def _data_connector_lock(self, connector_name: str) -> asyncio.Lock:
+        """Return a per-public-connector lock, lazily supporting test fixtures."""
+        locks = getattr(self, "_data_connector_locks", None)
+        if locks is None:
+            locks = {}
+            self._data_connector_locks = locks
+        if connector_name not in locks:
+            locks[connector_name] = asyncio.Lock()
+        return locks[connector_name]
+
     async def ensure_data_connector_started(
+        self,
+        connector_name: str,
+        trading_pair: str
+    ) -> bool:
+        """Start one shared public connector at a time across concurrent callers."""
+        async with self._data_connector_lock(connector_name):
+            if self._data_connectors_started.get(connector_name, False):
+                return True
+            return await self._ensure_data_connector_started_unlocked(
+                connector_name, trading_pair
+            )
+
+    async def _ensure_data_connector_started_unlocked(
         self,
         connector_name: str,
         trading_pair: str
@@ -636,16 +662,26 @@ class UnifiedConnectorService:
         # Start the public connector only after validation, so an invalid pair
         # cannot enter its shared WebSocket subscription list.
         if is_paper_trade:
-            if not self._data_connectors_started.get(connector_name, False):
-                success = await self.ensure_data_connector_started(
-                    connector_name, trading_pair
-                )
-                if not success:
-                    return False
-            elif trading_pair not in data_connector.order_book_tracker.order_books:
-                success = await data_connector.add_trading_pair(trading_pair)
-                if not success:
-                    return False
+            # Multiple scanners can observe "not started" simultaneously.
+            # Serialize startup, then re-check and register this caller's pair.
+            success = await self.ensure_data_connector_started(
+                connector_name, trading_pair
+            )
+            if not success:
+                return False
+
+            async with self._data_connector_lock(connector_name):
+                tracker = data_connector.order_book_tracker
+                if trading_pair not in tracker.order_books:
+                    success = await data_connector.add_trading_pair(trading_pair)
+                    if not success:
+                        logger.error(
+                            "Could not add %s to the shared %s paper-market tracker",
+                            trading_pair,
+                            connector_name,
+                        )
+                        return False
+
             if not await self._wait_for_order_book(
                 data_connector.order_book_tracker, trading_pair, timeout
             ):
