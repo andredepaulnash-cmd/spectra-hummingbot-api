@@ -366,8 +366,7 @@ jobs:
           from spectra_alpha2.governor import CapitalGovernor
           from spectra_alpha2.market_data import MarketCandidate
           from spectra_alpha2.order_builder import build_buy_market_order
-          from spectra_alpha2.policy import BUY_FEE_RATE
-
+          
           auth = os.environ["API_AUTH"]
 
           def request(path, payload=None, receipt=None):
@@ -458,10 +457,13 @@ jobs:
           governor.bind_order_id(authorization.authorization_id, order_id=order_id)
           print("Core-authorized paper order accepted:", order_id)
 
+          order_started_ms = int(time.time() * 1000)
           filters = {
               "account_names": ["master_account"],
               "connector_names": ["kraken_paper_trade"],
               "trading_pairs": [pair],
+              "start_time": order_started_ms - 120000,
+              "end_time": int(time.time() * 1000) + 2000,
               "limit": 100,
           }
           deadline = time.time() + 90
@@ -469,6 +471,7 @@ jobs:
           found_trades = []
           after_balances = {}
           while time.time() < deadline:
+              filters["end_time"] = int(time.time() * 1000) + 2000
               order_page = request("/trading/orders/search", filters)
               found_order = next(
                   (row for row in order_page.get("data", [])
@@ -493,11 +496,24 @@ jobs:
           filled_quantity = sum((Decimal(str(row["amount"])) for row in found_trades), Decimal("0"))
           gross = sum((Decimal(str(row["amount"])) * Decimal(str(row["price"])) for row in found_trades), Decimal("0"))
           average_price = gross / filled_quantity
-          estimated_buy_fee = gross * BUY_FEE_RATE
+          actual_fee_quote = Decimal("0")
+          for row in found_trades:
+              fee_paid = Decimal(str(row.get("fee_paid") or "0"))
+              fee_currency = str(row.get("fee_currency") or "").upper()
+              if fee_paid == 0:
+                  continue
+              if fee_currency == "USD":
+                  actual_fee_quote += fee_paid
+              elif fee_currency == "BTC":
+                  actual_fee_quote += fee_paid * Decimal(str(row["price"]))
+              else:
+                  raise RuntimeError(
+                      f"Cannot reconcile fee currency {fee_currency!r} for {pair}"
+                  )
           governor.settle_fill(
               authorization.authorization_id,
               actual_gross_notional=gross,
-              actual_fee=estimated_buy_fee,
+              actual_fee=actual_fee_quote,
               actual_quantity=filled_quantity,
               average_price=average_price,
           )
@@ -505,7 +521,7 @@ jobs:
           assert ledger["open_positions"] == 1, ledger
           assert ledger["open_lots"] == 1, ledger
           assert ledger["pools"]["INITIAL"]["reserved"] == 0, ledger
-          assert ledger["pools"]["INITIAL"]["spent"] == gross + estimated_buy_fee, ledger
+          assert ledger["pools"]["INITIAL"]["spent"] == gross + actual_fee_quote, ledger
           assert after_balances.get("BTC", Decimal("0")) > before_balances.get("BTC", Decimal("0")), {
               "before": before_balances, "after": after_balances
           }
@@ -513,7 +529,7 @@ jobs:
               "before": before_balances, "after": after_balances
           }
           print("Verified: Governor reservation -> Ed25519 receipt -> Kraken paper fill -> independent lot ledger.")
-          print("Order:", order_id, "quantity:", filled_quantity, "gross USD:", gross, "estimated buy fee:", estimated_buy_fee)
+          print("Order:", order_id, "quantity:", filled_quantity, "gross USD:", gross, "actual quote fee:", actual_fee_quote)
           print("Governor snapshot:", ledger)
           PY
 
