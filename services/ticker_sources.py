@@ -590,14 +590,22 @@ async def _kraken(connector, symbol_map: Mapping[str, str]) -> Dict[str, Ticker]
     """
     raw_to_hb = dict(symbol_map)
     asset_pairs = await connector.get_asset_pairs()
-    for hb_pair, details in asset_pairs.items():
+    for _, details in asset_pairs.items():
         if not isinstance(details, dict):
             continue
         base = details.get("base")
         quote = details.get("quote")
+        altname = details.get("altname")
+        # KrakenExchange.get_asset_pairs() is keyed by raw exchange IDs such as
+        # XXBTZUSD, and its base/quote values are also exchange-native (XXBT/ZUSD).
+        # The connector's canonical symbol map is keyed by altname (XBTUSD) and
+        # maps that value to Hummingbot's normalized pair (BTC-USD). Never use
+        # the AssetPairs dictionary key as the normalized pair.
+        hb_pair = symbol_map.get(altname) if isinstance(altname, str) else None
+        if not hb_pair:
+            continue
         if isinstance(base, str) and isinstance(quote, str):
             raw_to_hb[f"{base}{quote}"] = hb_pair
-        altname = details.get("altname")
         if isinstance(altname, str):
             raw_to_hb[altname] = hb_pair
 
