@@ -405,7 +405,7 @@ jobs:
           candidate = MarketCandidate(
               trading_pair=pair,
               base_asset="BTC",
-              quote_asset="USDT",
+              quote_asset="USD",
               last_price=best_ask,
               best_bid=best_bid,
               best_ask=best_ask,
@@ -424,7 +424,7 @@ jobs:
               environment=dict(os.environ),
           )
           authorization = governor.reserve_initial_position(
-              position_id="ci-btc-usdt",
+              position_id="ci-btc-usd",
               asset_id=pair,
               reference_price=best_ask,
               idempotency_key="ci-paper-initial-entry",
@@ -450,7 +450,7 @@ jobs:
           before = request("/portfolio/state", portfolio_filter)
           before_rows = before.get("master_account", {}).get("kraken_paper_trade", [])
           before_balances = {row["token"]: Decimal(str(row["units"])) for row in before_rows}
-          assert before_balances.get("USDT", Decimal("0")) >= Decimal("20"), before
+          assert before_balances.get("USD", Decimal("0")) >= Decimal("20"), before
 
           order = request("/trading/orders", draft.request_body, receipt.token)
           order_id = order.get("order_id")
@@ -483,7 +483,7 @@ jobs:
               if found_order and found_order.get("status") == "FILLED" and found_trades:
                   if (
                       after_balances.get("BTC", Decimal("0")) > before_balances.get("BTC", Decimal("0"))
-                      and after_balances.get("USDT", Decimal("0")) < before_balances.get("USDT", Decimal("0"))
+                      and after_balances.get("USD", Decimal("0")) < before_balances.get("USD", Decimal("0"))
                   ):
                       break
               time.sleep(2)
@@ -509,11 +509,11 @@ jobs:
           assert after_balances.get("BTC", Decimal("0")) > before_balances.get("BTC", Decimal("0")), {
               "before": before_balances, "after": after_balances
           }
-          assert after_balances.get("USDT", Decimal("0")) < before_balances.get("USDT", Decimal("0")), {
+          assert after_balances.get("USD", Decimal("0")) < before_balances.get("USD", Decimal("0")), {
               "before": before_balances, "after": after_balances
           }
           print("Verified: Governor reservation -> Ed25519 receipt -> Kraken paper fill -> independent lot ledger.")
-          print("Order:", order_id, "quantity:", filled_quantity, "gross USDT:", gross, "estimated buy fee:", estimated_buy_fee)
+          print("Order:", order_id, "quantity:", filled_quantity, "gross USD:", gross, "estimated buy fee:", estimated_buy_fee)
           print("Governor snapshot:", ledger)
           PY
 
