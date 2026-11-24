@@ -86,7 +86,7 @@ class TradeRepository:
             "trade_type": trade.trade_type,
             "amount": float(trade.amount),
             "price": float(trade.price),
-            "fee_paid": float(trade.fee_paid),
+            "fee_paid": float(trade.fee_paid or 0),
             "fee_currency": trade.fee_currency,
             "timestamp": trade.timestamp.isoformat(),
         }
