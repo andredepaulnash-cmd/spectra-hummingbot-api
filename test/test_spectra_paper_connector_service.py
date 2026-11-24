@@ -369,6 +369,79 @@ async def test_data_connector_start_waits_for_tracker_ready(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_concurrent_paper_pair_initialization_serializes_shared_tracker_startup():
+    import asyncio
+
+    class FakeTracker:
+        def __init__(self):
+            self.ready = False
+            self.order_books = {}
+
+    class FakeDataConnector:
+        def __init__(self):
+            self._trading_pairs = []
+            self.order_book_tracker = FakeTracker()
+            self.start_calls = 0
+            self.add_calls = []
+
+        async def exchange_symbol_associated_to_pair(self, trading_pair):
+            return trading_pair.replace("-", "")
+
+        async def start_network(self):
+            self.start_calls += 1
+            await asyncio.sleep(0)
+            for pair in self._trading_pairs:
+                self.order_book_tracker.order_books[pair] = object()
+            self.order_book_tracker.ready = True
+
+        async def stop_network(self):
+            self.order_book_tracker.ready = False
+
+        async def add_trading_pair(self, trading_pair):
+            self.add_calls.append(trading_pair)
+            await asyncio.sleep(0)
+            self.order_book_tracker.order_books[trading_pair] = object()
+            return True
+
+    data_connector = FakeDataConnector()
+    tracker = data_connector.order_book_tracker
+
+    class FakePaperConnector:
+        def __init__(self):
+            self.order_book_tracker = tracker
+            self.ready = True
+            self.trading_pairs = []
+
+        def init_paper_trade_market(self):
+            pass
+
+    paper_connector = FakePaperConnector()
+    service = UnifiedConnectorService.__new__(UnifiedConnectorService)
+    service._data_connectors = {"kraken_paper_trade": data_connector}
+    service._data_connectors_started = {}
+    service._data_connector_start_errors = {}
+    service._data_connector_locks = {}
+    service.get_best_connector_for_market = lambda *_args: paper_connector
+    service.get_data_connector = lambda _name: data_connector
+
+    async def wait_for_book(_tracker, pair, _timeout):
+        return pair in tracker.order_books
+
+    service._wait_for_order_book = wait_for_book
+    service._ensure_paper_trade_market_ready = lambda *_args: True
+
+    results = await asyncio.gather(
+        service.initialize_order_book("kraken_paper_trade", "BTC-USD"),
+        service.initialize_order_book("kraken_paper_trade", "ADA-USD"),
+    )
+
+    assert results == [True, True]
+    assert data_connector.start_calls == 1
+    assert data_connector.add_calls == ["ADA-USD"]
+    assert set(tracker.order_books) == {"BTC-USD", "ADA-USD"}
+
+
+@pytest.mark.asyncio
 async def test_paper_pair_symbol_map_failure_fails_closed():
     class FakeDataConnector:
         async def exchange_symbol_associated_to_pair(self, trading_pair):
