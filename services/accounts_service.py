@@ -309,7 +309,7 @@ class AccountsService:
             try:
                 await self._connector_service.sync_all_orders_to_database()
             except Exception as e:
-                logger.error(f"Error syncing order state to database: {e}")
+                logger.exception("Error syncing order state to database")
             finally:
                 await asyncio.sleep(self.order_status_poll_interval)
 
