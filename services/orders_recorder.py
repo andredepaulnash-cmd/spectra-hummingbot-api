@@ -292,11 +292,20 @@ class OrdersRecorder:
                             logger.error(f"Fallback fee calculation also failed: {fallback_err}")
                             trade_fee_paid = 0
                             trade_fee_currency = None
+                else:
+                    # An absent fee object is an explicit zero-fee fill; retain
+                    # the quote currency so downstream accounting can distinguish
+                    # zero from an unreported/failed fee conversion.
+                    try:
+                        _, quote_asset = split_trading_pair(event.trading_pair)
+                        trade_fee_currency = quote_asset
+                    except Exception:
+                        trade_fee_currency = None
                 # Update order with fill information (handle potential NaN values like Hummingbot does)
                 try:
                     filled_amount = Decimal(str(event.amount))
                     average_fill_price = Decimal(str(event.price))
-                    fee_paid_decimal = Decimal(str(trade_fee_paid)) if trade_fee_paid else None
+                    fee_paid_decimal = Decimal(str(trade_fee_paid)) if trade_fee_currency else None
 
                     order = await order_repo.update_order_fill(
                         client_order_id=event.order_id,
