@@ -320,7 +320,7 @@ class UnifiedConnectorService:
             Non-authenticated connector instance
         """
         from utils.spectra_market_data_policy import require_public_market_data_connector
-        require_public_market_data_connector(connector_name, self._conn_settings)
+        require_public_market_data_connector(connector_name, getattr(self, "_conn_settings", None))
         if connector_name not in self._data_connectors:
             self._data_connectors[connector_name] = self._create_data_connector(
                 connector_name
