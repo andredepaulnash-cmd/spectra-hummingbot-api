@@ -13,7 +13,7 @@ def test_default_public_data_allowlist_is_distinct_from_trade_profile():
         environ={}, known_connectors=known
     )
     assert allowed == frozenset({"binance", "kraken"})
-    assert require_public_market_data_connector("binance", known) == "binance"
+    assert require_public_market_data_connector("binance", known, env) == "binance"
     assert require_public_market_data_connector("kraken_paper_trade", known) == "kraken_paper_trade"
 
 
