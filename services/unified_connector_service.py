@@ -319,7 +319,8 @@ class UnifiedConnectorService:
         Returns:
             Non-authenticated connector instance
         """
-        require_paper_trade_connector(connector_name)
+        from utils.spectra_market_data_policy import require_public_market_data_connector
+        require_public_market_data_connector(connector_name, self._conn_settings)
         if connector_name not in self._data_connectors:
             self._data_connectors[connector_name] = self._create_data_connector(
                 connector_name
@@ -1161,7 +1162,8 @@ class UnifiedConnectorService:
 
     def _create_data_connector(self, connector_name: str) -> ConnectorBase:
         """Create a non-authenticated data connector."""
-        require_paper_trade_connector(connector_name)
+        from utils.spectra_market_data_policy import require_public_market_data_connector
+        require_public_market_data_connector(connector_name, self._conn_settings)
         # A paper-trade name is a Hummingbot wrapper identity, not a Python
         # exchange module. Public market-data connectors must use the base exchange.
         base_connector_name = (
