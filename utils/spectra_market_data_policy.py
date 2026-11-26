@@ -43,10 +43,6 @@ def configured_public_market_data_connectors(
             raise PublicMarketDataPolicyError(
                 "Public market-data connector names must be native Hummingbot connector names"
             )
-        if known_connectors is not None and name not in known_connectors:
-            raise PublicMarketDataPolicyError(
-                f"Configured public market-data connector is not installed: {name}"
-            )
     return names
 
 
@@ -61,6 +57,10 @@ def require_public_market_data_connector(
         known_connectors=known_connectors,
     )
     base_name = name.removesuffix("_paper_trade")
+    if known_connectors is not None and base_name not in known_connectors:
+        raise PublicMarketDataPolicyError(
+            f"Public market-data connector is not installed: {base_name}"
+        )
     if name.endswith("_paper_trade"):
         # A paper wrapper may use its own base exchange solely for public data.
         if base_name not in allowed:
