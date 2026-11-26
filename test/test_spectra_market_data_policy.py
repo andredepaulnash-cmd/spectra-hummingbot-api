@@ -27,11 +27,12 @@ def test_public_data_allowlist_can_be_explicitly_restricted():
 
 def test_unknown_or_paper_named_data_connector_is_rejected():
     known = {"kraken": object()}
+    assert configured_public_market_data_connectors(
+        {"SPECTRA_PUBLIC_MARKET_DATA_CONNECTORS": "binance"},
+        known,
+    ) == frozenset({"binance"})
     with pytest.raises(PublicMarketDataPolicyError, match="not installed"):
-        configured_public_market_data_connectors(
-            {"SPECTRA_PUBLIC_MARKET_DATA_CONNECTORS": "binance"},
-            known,
-        )
+        require_public_market_data_connector("binance", known, {"SPECTRA_PUBLIC_MARKET_DATA_CONNECTORS": "binance"})
     with pytest.raises(PublicMarketDataPolicyError, match="native Hummingbot"):
         configured_public_market_data_connectors(
             {"SPECTRA_PUBLIC_MARKET_DATA_CONNECTORS": "kraken_paper_trade"},
