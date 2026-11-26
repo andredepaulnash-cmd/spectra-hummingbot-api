@@ -87,19 +87,23 @@ async def test_paper_trade_order_sync_skips_unsupported_inflight_orders():
     await service.sync_all_orders_to_database()
 
 
-def test_data_connector_creation_rejects_live_connector(monkeypatch):
+def test_public_market_data_connector_is_separate_from_trade_connector(monkeypatch):
     monkeypatch.setenv("SPECTRA_PAPER_ONLY", "true")
     monkeypatch.setenv("SPECTRA_ALLOW_LIVE_EXECUTION", "false")
+    monkeypatch.setenv("SPECTRA_PUBLIC_MARKET_DATA_CONNECTORS", "kraken,binance")
     service = UnifiedConnectorService.__new__(UnifiedConnectorService)
     service._data_connectors = {}
     service._create_data_connector = lambda name: f"data:{name}"
 
-    with pytest.raises(ValueError, match="only the keyless kraken_paper_trade"):
-        service.get_data_connector("kraken")
-
+    # Native Kraken and Binance connectors are public-data-only here; neither
+    # becomes an authorized trade connector through this method.
+    assert service.get_data_connector("kraken") == "data:kraken"
+    assert service.get_data_connector("binance") == "data:binance"
     assert service.get_data_connector("kraken_paper_trade") == (
         "data:kraken_paper_trade"
     )
+    with pytest.raises(ValueError, match="not approved for public market data"):
+        service.get_data_connector("coinbase")
 
 
 def test_available_credentials_exposes_only_configured_paper_connector(monkeypatch):
