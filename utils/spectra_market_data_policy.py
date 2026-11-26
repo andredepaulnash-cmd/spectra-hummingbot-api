@@ -53,9 +53,11 @@ def configured_public_market_data_connectors(
 def require_public_market_data_connector(
     connector_name: str,
     known_connectors: Mapping[str, object] | None = None,
+    environ: Mapping[str, str] | None = None,
 ) -> str:
     name = str(connector_name or "").strip().lower()
     allowed = configured_public_market_data_connectors(
+        environ=environ,
         known_connectors=known_connectors,
     )
     base_name = name.removesuffix("_paper_trade")
