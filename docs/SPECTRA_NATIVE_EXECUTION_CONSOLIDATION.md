@@ -1,6 +1,6 @@
 # Spectra API Native Execution Consolidation Audit
 
-Status: repository-backed architecture decision; implementation track in progress.
+Status: architecture decision plus initial profile-contract implementation; runtime integration remains in progress.
 Working branch: `architecture/native-engine-consolidation`
 
 ## Verified Hummingbot foundation
@@ -37,9 +37,16 @@ PAPER and LIVE are both supported operating profiles, selected by Spectra—not 
 - The same Hummingbot trading route and connector lifecycle are used in both profiles. No custom live-order client is to be added.
 - Existing paper-only routes remain the default until the full profile contract and tests are implemented. Do not weaken current protections in an intermediate commit.
 
+## Initial implementation on this branch
+
+- `utils/spectra_execution_profile.py` defines the API-side immutable PAPER/LIVE profile contract. PAPER defaults to `master_account` and `kraken_paper_trade`; LIVE requires explicit enablement, a separate account, and a native non-paper connector.
+- `test/test_spectra_execution_profile.py` covers defaults, explicit LIVE opt-in, account/connector isolation, invalid names, and order-scope mismatch.
+- The API container build and existing accounting check passed for the profile-contract commit.
+- This resolver is not yet wired into `main.py`, connector startup, `UnifiedConnectorService`, route authorization, or the dispatch receipt verifier. The current paper-only guard remains the active runtime enforcement. Do not infer that LIVE order dispatch is available from the profile resolver alone.
+
 ## Required implementation work
 
-1. Trace all uses of `paper_only_enabled`, `configured_paper_connectors`, `require_paper_trade_connector`, and `should_block_paper_mutation` across startup, dependencies, connector creation, account configuration, and routes.
+1. Trace all uses of `paper_only_enabled`, `configured_paper_connectors`, `require_paper_trade_connector`, and `should_block_paper_mutation` across startup, dependencies, connector creation, account configuration, and routes. (Startup and primary connector-service call sites have been inspected; full call-site inventory and profile-aware replacement remain open.)
 2. Replace scattered environment checks with one typed, centrally loaded execution-profile policy. Keep the paper-only release behavior unchanged.
 3. Add profile-bound dispatch receipt validation and ensure the API derives account/connector from the profile, never from an untrusted client-supplied connector.
 4. Keep credential creation/storage/retrieval inside Hummingbot's existing encrypted configuration mechanism. Do not pass exchange secrets through Spectra Core env vars or logs.
